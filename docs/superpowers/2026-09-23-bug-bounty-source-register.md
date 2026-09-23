@@ -60,3 +60,58 @@ labeled rolling; versioned standards get versioned links.
 - **MASWE catalog grows** — numbers beyond 0078 may appear; skill ranges documented, not hard-frozen.
 - **Platform severity policies** (HackerOne bands, Bugcrowd VRT, Intigriti, YWH) — rolling; date-stamp every platform claim.
 - **No live-target testing** performed for this refresh (per spec non-goal).
+
+## Finalization (2026-09-23, post-implementation)
+
+### Implemented state per skill
+
+All 17 skills now carry: `sources.md` (source/version/review metadata) +
+a `sources.md` pointer in `SKILL.md`. Topical refresh commits:
+`af73f48` (T2 orchestrator), `d5c87b0` (T3 recon), `80967b6` (T4 API),
+`4dec38a` (T5 WSTG/Academy/WAHH), `69daf70` (T6 cloud+mobile),
+`2e97973` (T7 reporting), `a6f9297` (T8 seven legacy skills).
+
+- `bug-bounty-hunter`: scope contract deny-by-default, GenAI/API-2023/
+  severity routing, pressure scenarios; `sources.md` source hierarchy.
+- `recon-pipeline`: P/T/I traffic classes, allowlist-derived targets
+  (wildcard ≠ apex), Amass-v5 + Gowitness-v3 syntax, masscan exceptional
+  path, secret-safe artifacts, dated outputs + diff triage.
+- `owasp-api-security-top-10` + `hacking-apis`: 2019→2023 crosswalk per
+  chapter, BOPLA read/write split, API6/7/10:2023 coverage, low-volume
+  own-account auth checks.
+- `web-security-academy`/`owasp-wstg`/`web-app-hackers-handbook`: LLM→
+  GenAI 2025 mapping, lab-vs-bounty callouts, version-scoped WSTG labels,
+  WAHH era markers.
+- `hacking-the-cloud`/`owasp-mas`: creds non-use-by-default, canary-only
+  write proofs, MASTG v2.0.0 + MASVS-PRIVACY notes, tool-currency rules.
+- `report-writing`: program→platform→CVSS-v4 precedence, scope/asset
+  declaration, redaction rules, demonstrated-vs-theoretical split.
+- 7 legacy skills: per-chapter ceiling/era/ownership callouts, harmless-
+  marker proofs, modern-taxonomy routing, `sources.md` each.
+
+### Unresolved gaps (accepted, watch)
+
+- **Mass-assignment primary** in vuln-class-index still points at the
+  2019 ch06 file — intentionally: the file carries the 2023 status line
+  and is the write-side of BOPLA. No rename (chapter IDs stable).
+- **WSTG v5.0 draft items** (e.g., BUSL-10) live in the skill with
+  provenance notes; v4.2 IDs remain the stable quoting anchors.
+- **Platform severity policies** are rolling — every platform claim in
+  `report-writing` is date-stamped 2026-09-23.
+- **No live-target testing** (spec non-goal). All validation was static:
+  scanner, validator, link checks, logic tests.
+
+### Next review triggers
+
+- **Amass v5.x**: re-verify `enum`/`subs`/DB-export commands each minor
+  release (v5 churn is the highest-volatility surface in the set).
+- **WSTG v5.0 stable release**: promote `latest` items to versioned IDs;
+  re-run BUSL/checklist parity.
+- **OWASP API Top 10 next edition**: re-run the crosswalk; the 2019
+  labels stay historical.
+- **MASWE catalog > 0078**: extend `owasp-mas` ranges; MASVS-PRIVACY is
+  the most likely next category to grow.
+- **CVSS v4.x updates** + platform VRT/policy changes: refresh
+  `report-writing` severity chapter.
+- **Tool version drift** (httpx/dnsx/trufflehog/gitleaks/gowitness/nmap):
+  annual re-pin or on any command failure report.
