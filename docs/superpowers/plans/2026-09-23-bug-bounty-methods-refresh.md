@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-23-bug-bounty-methods-refresh-design.md`
 
+**Supplemental design:** `docs/superpowers/specs/2026-09-23-claude-bughunter-integration-addendum.md` (selective engagement organization, finding/submission templates, validation gate, and evidence hygiene; do not import the upstream skill set wholesale).
+
 ## Global Constraints
 
 - Refresh the existing 17 skills in `C:\Users\luong\.agents\skills\` so they teach current, practical methods for authorized bug bounty work as of 2026-09-23.
@@ -244,6 +246,27 @@
 - [ ] **Step 5: Run the approved scope pressure scenarios** from Tasks 2, 3, and 6 against the updated guidance; record whether the agent halts, narrows, or uses test-owned data as expected.
 - [ ] **Step 6: Read the final source register and router once end-to-end**; confirm no undocumented source/version assumptions remain and no live target was tested.
 - [ ] **Step 7: Report completion** with skill coverage, source cutoff, check outcomes, warnings/dispositions, and known gaps.
+
+### Task 11: Integrate engagement organization and templates
+
+**Files:**
+- Modify: `C:\Users\luong\.agents\skills\bug-bounty-hunter\SKILL.md` and relevant session/phase-map chapters
+- Modify: `C:\Users\luong\.agents\skills\recon-pipeline\SKILL.md` and `chapters\02-outputs.md`
+- Modify: `C:\Users\luong\.agents\skills\report-writing\SKILL.md` and `chapters\02-template.md`, `chapters\04-triage.md`
+- Read: `docs/superpowers/specs/2026-09-23-claude-bughunter-integration-addendum.md`
+
+**Interfaces:**
+- Consumes: the approved addendum and scope/evidence rules from Tasks 2–3 and 7.
+- Produces: optional reusable engagement workspace guidance, a finding lifecycle/template, a safe pre-report gate, and an evidence checklist integrated into existing skills.
+
+- [ ] **Step 1: Add the engagement snapshot/workspace concept** to the router/session checklist: dated policy snapshot, exact in-scope and excluded assets, permitted methods, limits, stop conditions, and account aliases only.
+- [ ] **Step 2: Ensure recon output distinguishes verified assets from unverified leads** and records provenance; never auto-promote discovered hosts into the active target allowlist.
+- [ ] **Step 3: Add finding lifecycle and compact finding/submission templates** covering reproducibility, scope evidence, demonstrated impact, evidence index, report ID, status, and next action; never put credentials or user data in trackers.
+- [ ] **Step 4: Add the candidate validation gate** before report drafting. A failed gate stops that candidate or marks it inconclusive; it does not halt unrelated authorized engagement work.
+- [ ] **Step 5: Add evidence hygiene checks** for screenshots, HARs, request/response bodies, secrets, and incidental personal data. Verify sanitized artifacts; do not rely on header-only filters or preserve unnecessary raw captures.
+- [ ] **Step 6: Adapt templates to the active platform's current policy and taxonomy**; do not copy outdated universal severity assumptions or unsafe upstream examples involving real-user data.
+- [ ] **Step 7: Preserve attribution/license requirements for any copied upstream text; prefer original wording based on the concepts and record source links.**
+- [ ] **Step 8: Confirm the additions are discoverable from the router and do not conflict with the core deny-by-default authorization contract.**
 
 ## Self-Review Notes
 
