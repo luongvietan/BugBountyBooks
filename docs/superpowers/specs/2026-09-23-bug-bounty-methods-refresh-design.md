@@ -1,15 +1,23 @@
-# Design: Refresh the 17 Bug Bounty Skills to 2026
+# Design: 2026 Bug Bounty Skills Refresh — Baseline and Delta
 
-Date: 2026-09-23
-Status: draft, awaiting user review
+Date: 2026-09-24 (delta review)
+Status: revised draft, awaiting user review
 
 ## Intent
 
-Refresh the existing 17 skills in `C:\Users\luong\.agents\skills\` so they
-teach current, practical methods for authorized bug bounty work as of
-2026-09-23. Preserve useful foundational material, update stale advice and
-tooling, and make scope control operationally unambiguous. The skills remain
-the user's personal workflow; this is not an instruction to test any target.
+The original refresh of the existing 17 skills in
+`C:\Users\luong\.agents\skills\` is recorded as implemented in the source
+register. This delta review identifies drift since that refresh, reconciles
+the implementation plan with the recorded state, and updates only affected
+guidance. Preserve useful foundational material, keep scope control
+operationally unambiguous, and do not test any target as part of this work.
+
+## Original full-refresh baseline (2026-09-23)
+
+The sections below preserve the original full-refresh design as context for
+the completed work. Their source cutoff and per-skill update scope describe
+that baseline; the authoritative follow-up scope and acceptance criteria are
+in **Delta review design — 2026-09-24** at the end of this document.
 
 ## User-approved direction
 
@@ -43,8 +51,9 @@ to current procedures.
 
 - No active probing, scanning, exploit attempts, or credential validation
   against a bounty program as part of this documentation update.
-- No promise to include undisclosed or zero-day techniques; the cutoff is the
-  verifiable public state on 2026-09-23.
+- No promise to include undisclosed or zero-day techniques; the original
+  full-refresh cutoff was 2026-09-23. The delta review uses sources verified
+  through 2026-09-24.
 - No wholesale re-conversion of the source books and no copying of substantial
   source text. Keep transformed notes, short attributed references, and links.
 - No new skills, automated scanner product, or claims that CVSS determines a
@@ -121,7 +130,8 @@ Use the following order when guidance conflicts:
 5. Existing books and community methodologies for durable concepts; label
    edition/date limits and do not use them as sole authority for current rules.
 
-Starting source anchors for this refresh include:
+Initial source anchors for the full refresh (see the delta review below for
+current-source updates) included:
 
 - OWASP API Security Top 10 2023:
   `https://api-security.owasp.org/editions/2023/en/0x00-header/`
@@ -130,7 +140,8 @@ Starting source anchors for this refresh include:
   versions before finalizing)
 - FIRST CVSS v4.0 specification and user guide:
   `https://www.first.org/cvss/v4-0/`
-- OWASP Top 10 for LLM Applications 2025:
+- OWASP Top 10 for LLM Applications 2025 (historical baseline; superseded for
+  current guidance by the 2026 edition):
   `https://owasp.org/www-project-top-10-for-large-language-model-applications/`
 - PortSwigger Web Security Academy topic index:
   `https://portswigger.net/web-security/all-materials`
@@ -185,3 +196,56 @@ Starting source anchors for this refresh include:
   edits and validate all referenced paths as a final gate.
 - **Copyright/licensing:** synthesize methods, attribute licensed material,
   and link to source documents instead of reproducing chapters.
+
+## Delta review design — 2026-09-24
+
+### Current state and intent
+
+The 2026-09-23 source register records all 17 skills as implemented, including
+the scope contract, recon provenance, hypothesis engine, finding lifecycle,
+validation gate, evidence hygiene, and monitoring. The implementation plan
+still has unchecked task boxes, so it no longer accurately represents the
+work state. This follow-up is a targeted currency and plan-reconciliation
+pass, not a second full refresh of the 17-skill set.
+
+### Methodology alignment
+
+Keep the existing seven-phase `bug-bounty-hunter` router as the operating
+entry point. Cross-map the 12-stage research methodology from program
+intelligence through continuous monitoring onto its existing phases and
+artifacts. Extend the router only where a real gap remains. Preserve the
+existing feature cards, falsifiable hypothesis cards, authorization gates,
+independent validation, duplicate/outcome records, and monitoring workflow;
+do not create a parallel lifecycle or duplicate the hypothesis engine.
+
+### Source and implementation deltas
+
+- Refresh the source register cutoff and review date to 2026-09-24.
+- Replace OWASP GenAI LLM Top 10 2025 as the current AI risk reference with
+  the official 2026 edition. Add the OWASP Top 10 for Agentic Applications
+  2026 where agent and tool authorization are discussed. Preserve 2025
+  references only when they are explicitly historical.
+- Verify whether OWASP AI Testing Guide v1 (published in 2025) adds useful,
+  testable coverage beyond the two Top 10 references; include it only where
+  it contributes a distinct method.
+- Keep WSTG v4.2 as the stable versioned baseline while marking v5 material
+  as draft until OWASP publishes a stable release. Keep API Security Top 10
+  2023 and ASVS 5.0.0 unless the official projects show a newer stable
+  edition at implementation time.
+- Reconcile the implementation plan against Git history, the source register,
+  and the actual skill files. Mark completed work with evidence; retain only
+  verified unresolved deltas as tasks.
+- Update only the source register, router, AI/LLM skill materials, and any
+  directly affected source metadata or links. Leave unrelated skills alone.
+
+### Acceptance criteria for this delta
+
+- The plan's checkboxes and completion notes agree with the implemented state
+  and can be traced to files or commits.
+- Current AI security references use OWASP's 2026 LLM and agentic editions;
+  dated 2025 material is labeled historical where retained.
+- The seven-phase router and existing hypothesis engine are mapped to the
+  research lifecycle without duplicate stages or a second competing process.
+- Stable standards remain version-pinned, draft material is labeled, and all
+  changing claims have a review date and canonical source.
+- No live-target testing is performed during the documentation update.
