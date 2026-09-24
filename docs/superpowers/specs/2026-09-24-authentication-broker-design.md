@@ -2,7 +2,7 @@
 
 Date: 2026-09-24
 
-Status: design approved in conversation; written-spec review pending
+Status: design and written spec approved in conversation on 2026-09-24
 
 ## Intent
 
