@@ -1,17 +1,23 @@
 # Bug Bounty Skill Set — Source & Coverage Register
 
-Cutoff: **2026-09-23**. Every version below was verified against the official
-page/release feed on this date (not from search snippets). Rolling docs are
-labeled rolling; versioned standards get versioned links.
+Review cutoff: **2026-09-24** for the authorities re-checked in this delta.
+Other foundational and rolling entries retain the **2026-09-23** baseline
+snapshot unless a newer check date appears in the row. The tool-version table
+also retains its **2026-09-23** snapshot. Rolling docs are labeled rolling;
+versioned standards get versioned links. Current claims were checked on their
+official project pages, not from search snippets.
 
 ## Verified authorities
 
-| Authority | Current state @ 2026-09-23 | Canonical URL | Notes |
+| Authority | Recorded state | Canonical URL | Notes |
 |---|---|---|---|
-| OWASP API Security Top 10 | **2023 stable** (rel. 2023-06-05); no newer edition | `https://owasp.org/API-Security/editions/2023/en/0x11-t10/` | API1 BOLA · API2 Broken Auth · API3 **BOPLA** (merges 2019 API3+API6) · API4 Unrestricted Resource Consumption · API5 BFLA · API6 Sensitive Business Flows · API7 SSRF · API8 Misconfiguration · API9 Improper Inventory · API10 Unsafe API Consumption |
-| OWASP WSTG | **v4.2 last stable** (2020-12-03); v5.0 in development (master/`latest`) | `https://wstg.owasp.org/v4.2/` versioned · `…/latest/` bleeding-edge | Project rule: link versioned paths, never `stable`/`latest`. Live tree already includes post-4.2 tests (e.g. §4.10.10 BUSL-10, OAuth 4.5.5.x, API headers 4.2.14) |
+| OWASP API Security Top 10 | **2023 current edition**; project page still identifies 2023 as latest (checked 2026-09-24) | `https://owasp.org/projects/api-security-project` · versioned 2023 contents: `https://owasp.org/API-Security/editions/2023/en/0x11-t10/` | API1 BOLA · API2 Broken Auth · API3 **BOPLA** (merges 2019 API3+API6) · API4 Unrestricted Resource Consumption · API5 BFLA · API6 Sensitive Business Flows · API7 SSRF · API8 Misconfiguration · API9 Improper Inventory · API10 Unsafe API Consumption |
+| OWASP WSTG | **v4.2 latest stable** (checked 2026-09-24); v5.0 remains in development | `https://owasp.org/projects/web-security-testing-guide` · versioned v4.2: `https://wstg.owasp.org/v4.2/` | Project says v5 is in development and directs readers to `latest` for development content; stable citations stay on versioned v4.2 paths. |
 | FIRST CVSS | **v4.0 current**; v3.1/v3.0/v2 archived | `https://www.first.org/cvss/v4-0/` (spec, calculator, user guide) | v4.0 metric groups: Base (Threat+Environmental+Supplemental optional). Keep v3.x only when a program requires it |
-| OWASP GenAI Security Project | **Top 10 for LLM Apps 2025** (v2025); project renamed from "LLM Top 10" | `https://genai.owasp.org/llm-top-10/` | LLM01 prompt injection, LLM02 sensitive info disclosure, LLM05 improper output handling, LLM06 excessive agency, LLM08 vector/embedding weaknesses, LLM10 unbounded consumption — map to T5 LLM chapter |
+| OWASP ASVS | **5.0.0 latest stable**, as stated by the project guidance page (checked 2026-09-24) | `https://owasp.org/projects/asvs` | The project page's guidance calls 5.0.0 the latest stable version; its separate project-info field appends “Bleeding Edge.” Cite versioned 5.0.0 requirements and re-check that page wording before using unversioned IDs. |
+| OWASP GenAI LLM Top 10 | **2026 current edition**, resource page published 2026-08-03 | `https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/` | LLM01 Prompt Injection · LLM02 Sensitive Information Disclosure · LLM03 Excessive Agency · LLM04 Supply Chain · LLM05 Data and Model Poisoning · LLM06 Unbounded Consumption · LLM07 Misinformation · LLM08 Hidden Context Exposure · LLM09 Vector and Embedding Weaknesses · LLM10 Improper Output Handling. The 2025 list is historical: `https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/`. |
+| OWASP Top 10 for Agentic Applications | **2026 edition**, announced 2025-12-09 | `https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/` | Use the testable boundaries ASI01 Agent Goal Hijack, ASI02 Tool Misuse and Exploitation, ASI03 Identity and Privilege Abuse, and ASI06 Memory and Context Poisoning where the product exposes them. |
+| OWASP AI Testing Guide | **v1 published 2025-11-26**; project is an incubator and its repository is rolling | `https://owasp.org/projects/ai-testing-guide` · official test index: `https://github.com/OWASP/www-project-ai-testing-guide/blob/main/Document/README.md` | Adds test-method IDs beyond a risk taxonomy, including APP-01/02 prompt injection, APP-06 agent behavior limits, APP-08 embedding manipulation, and INF-03/04 plugin-boundary/capability misuse. Use only relevant, authorized product tests; model, training-data, and infrastructure coverage is not a bounty authorization. |
 | OWASP MAS (MASVS/MASTG/MASWE) | Rolling docs at mas.owasp.org; MASWE catalog 0001–0078 live; MASTG-BEST-xxxx series live | `https://mas.owasp.org/` | MASVS has **8** groups incl. PRIVACY (MASWE-0066–0078) — our skill scoped to 7 + documented exclusion. GitHub latest release tag should be re-pinned at review time |
 | PortSwigger Web Security Academy | Rolling; "latest topics" banner: request smuggling, web cache deception, Web LLM attacks, API testing, NoSQLi | `https://portswigger.net/web-security/all-materials` | Lab anchors verified per-topic in T7 build; SAML is NOT an Academy topic (404) — keep our noted exception |
 | Hacking the Cloud | Rolling (hackingthe.cloud, AWS/GCP/Azure sections) | `https://hackingthe.cloud/` | Content MIT-licensed; techniques skew AWS |
@@ -33,6 +39,12 @@ labeled rolling; versioned standards get versioned links.
 
 ## Per-skill register (17 rows)
 
+The **Files needing substantive review** column records the planned substantive
+review surface, not an exhaustive changelog of every modified file. Supporting
+artifacts such as `SKILL.md`, `sources.md`, `cheatsheet.md`, and `patterns.md`
+may also change during implementation or final-review fixes. Use the Git history
+for the authoritative list of files changed by each task/commit.
+
 | Skill | Current source/version in skill | 2026 authority checked | Files needing substantive review | Disposition |
 |---|---|---|---|---|
 | `bug-bounty-hunter` | Orchestrator (authored 2026-09-23) | Program-policy-first pattern; all 16 companions | SKILL.md + 3 chapters | UPDATE: scope-first/deny-by-default rewrite (T2) + sources.md |
@@ -42,7 +54,7 @@ labeled rolling; versioned standards get versioned links.
 | `owasp-mas` | MASTG v2.0.0 release | mas.owasp.org rolling (MASWE-0066–0078 incl. PRIVACY) | SKILL.md + ch01,02,04,05,06,09 | UPDATE: refresh MASWE refs + tool syntax, keep 7-category scope + privacy note (T6) |
 | `owasp-wstg` | WSTG v4.2 frozen + BUSL-10 post-4.2 | v4.2 still last stable; v5 dev = latest/master | SKILL.md + ch01,02,05,07,10,11,12 | UPDATE: version-scoped labels (v4.2 IDs stable / latest=draft), light refresh of stale tool notes (T5) |
 | `web-app-hackers-handbook` | WAHH ed2 (2011), 20 chapters | Modern equivalents (Academy/WSTG) — mechanics durable | SKILL.md + ch03,05,07,11,13,19,20 | UPDATE: era-label remaining stale spots, route modern classes (T5) |
-| `web-security-academy` | PortSwigger topics @ build | Academy rolling; LLM→OWASP GenAI 2025 | SKILL.md + ch01–09,15 | UPDATE: expand LLM to OWASP 2025 risks, lab-vs-bounty-safe split per technique (T5) |
+| `web-security-academy` | PortSwigger topics @ build; OWASP GenAI LLM Top 10 2026 | Academy rolling; current LLM + Agentic 2026; selected AI Testing Guide v1 methods | SKILL.md + ch01–09,15 | UPDATE: align chapter 15 with 2026 LLM/Agentic risks and selected AITG test IDs; retain lab-vs-bounty-safe gates (delta 2026-09-24) |
 | `payloads-all-the-things` | swisskyrepo rolling master | Same rolling source | SKILL.md + ch01,04,05,06,08,11,14,15 | UPDATE: context-first selection framing, lab-vs-live distinction (T8) |
 | `tbhm-methodology` | jhaddix/tbhm + Haddix talks | Recon-stack drift (amass v5 etc.) | SKILL.md + ch02,03,08 mainly | UPDATE: era-mark tool examples, route to recon-pipeline for executable state (T8) |
 | `hacking-apis` | Corey Ball book (Early Access) | API Top 10 2023 + vendor docs | SKILL.md + ch00,01,03,04,05,06,07,08,10,11 | UPDATE: 2023 crosswalk, BOPLA rename, low-volume auth checks (T4) |
@@ -71,7 +83,7 @@ a `sources.md` pointer in `SKILL.md`. Topical refresh commits:
 `4dec38a` (T5 WSTG/Academy/WAHH), `69daf70` (T6 cloud+mobile),
 `2e97973` (T7 reporting), `a6f9297` (T8 seven legacy skills).
 
-- `bug-bounty-hunter`: scope contract deny-by-default, GenAI/API-2023/
+- `bug-bounty-hunter`: scope contract deny-by-default, GenAI 2026/Agentic 2026/API-2023/
   severity routing, pressure scenarios; `sources.md` source hierarchy.
 - `recon-pipeline`: P/T/I traffic classes, allowlist-derived targets
   (wildcard ≠ apex), Amass-v5 + Gowitness-v3 syntax, masscan exceptional
@@ -80,7 +92,7 @@ a `sources.md` pointer in `SKILL.md`. Topical refresh commits:
   chapter, BOPLA read/write split, API6/7/10:2023 coverage, low-volume
   own-account auth checks.
 - `web-security-academy`/`owasp-wstg`/`web-app-hackers-handbook`: LLM→
-  GenAI 2025 mapping, lab-vs-bounty callouts, version-scoped WSTG labels,
+  GenAI 2026 mapping, lab-vs-bounty callouts, version-scoped WSTG labels,
   WAHH era markers.
 - `hacking-the-cloud`/`owasp-mas`: creds non-use-by-default, canary-only
   write proofs, MASTG v2.0.0 + MASVS-PRIVACY notes, tool-currency rules.
@@ -113,5 +125,46 @@ a `sources.md` pointer in `SKILL.md`. Topical refresh commits:
   the most likely next category to grow.
 - **CVSS v4.x updates** + platform VRT/policy changes: refresh
   `report-writing` severity chapter.
+- **OWASP GenAI / Agentic editions and AI Testing Guide test IDs**: check
+  the official project pages at each annual review and when a new stable
+  edition or distinct application-test method is announced.
 - **Tool version drift** (httpx/dnsx/trufflehog/gitleaks/gowitness/nmap):
   annual re-pin or on any command failure report.
+
+## Methodology currency delta (2026-09-24)
+
+The user-shared *BUG BOUNTY METHODOLOGY 2026 v3.0* was read and applied as a
+12-activity crosswalk in the existing seven-phase `bug-bounty-hunter` router.
+Functional mapping precedes feature-led deep recon; AI assistance remains an
+overlay on the existing human-owned hypothesis and authorization gates. No
+parallel lifecycle or duplicate validation/monitoring records were added.
+
+Current sources re-checked for this delta: OWASP GenAI LLM Top 10 2026,
+OWASP Top 10 for Agentic Applications 2026, selected OWASP AI Testing Guide
+v1 procedures, WSTG v4.2 (v5.0 remains in development), API Security Top 10
+2023, and ASVS 5.0.0. The ASVS project page still has mixed status language:
+its guidance calls 5.0.0 latest stable while its project-info field says
+“Bleeding Edge”; use versioned 5.0.0 requirements and re-check before relying
+on unversioned status claims. The 2025 LLM list remains historical only.
+
+Delta files changed in the skills repository:
+
+- `bug-bounty-hunter/SKILL.md`
+- `bug-bounty-hunter/chapters/01-phase-map.md`
+- `bug-bounty-hunter/chapters/02-session-checklist.md`
+- `bug-bounty-hunter/chapters/03-vuln-class-index.md`
+- `bug-bounty-hunter/sources.md`
+- `web-security-academy/SKILL.md`
+- `web-security-academy/chapters/ch15-logic-race-api-llm.md`
+- `web-security-academy/sources.md`
+
+This register and the historical full-refresh plan were updated in this
+workspace; the dated delta plan records the execution steps. Final static
+review found all 12 crosswalk activities mapped, the Phase 2/3 session gate
+consistent with functional-first ordering, 231 changed-chapter references
+resolving, no remaining current-2025 LLM route, and no whitespace errors.
+No live-target requests, scans, exploit attempts, or credential checks were
+performed. The original plan's generated-skill scanner and pressure-scenario
+steps remain open because their run output was not retained; this delta does
+not claim those checks passed. Other rolling authorities and tool versions
+not named above retain their 2026-09-23 baseline snapshot.

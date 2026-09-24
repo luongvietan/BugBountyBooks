@@ -12,6 +12,8 @@
 
 **Supplemental design:** `docs/superpowers/specs/2026-09-23-claude-bughunter-integration-addendum.md` (selective engagement organization, finding/submission templates, validation gate, and evidence hygiene; do not import the upstream skill set wholesale).
 
+> **Historical status reconciled 2026-09-24:** This full-refresh plan describes the 2026-09-23 baseline; follow-up currency work is tracked in `docs/superpowers/plans/2026-09-24-bug-bounty-methodology-delta.md`. The 17-skill implementation is backed by the skills-repo history: `af73f48`, `d5c87b0`, `80967b6`, `4dec38a`, `69daf70`, `2e97973`, `a6f9297`, `392e7a9`, `ac294d7`, and `4f79645`, with relevant files present in the current tree. Tasks 1–9 and 11 are recorded complete. Task 10 Steps 1–3 are verified by the 2026-09-24 inventory, frontmatter/source-pointer, router-path, and wording review. Task 10 Steps 4–5 remain open because no scanner output or pressure-scenario result artifact was retained. Steps 6–7 were completed at delta closeout: the final source register and router were read through, and the completion report records checks and unresolved gaps. The source register's earlier summary does not close the two unverified scanner/scenario steps.
+
 ## Global Constraints
 
 - Refresh the existing 17 skills in `C:\Users\luong\.agents\skills\` so they teach current, practical methods for authorized bug bounty work as of 2026-09-23.
@@ -46,11 +48,11 @@
 - Consumes: approved design spec and existing 17-skill tree.
 - Produces: source register with one row per skill: current source/version, 2026 source to check, files that need substantive review, and planned disposition.
 
-- [ ] **Step 1: Inventory current skill files** with `Get-ChildItem C:\Users\luong\.agents\skills\bug-bounty-hunter -Recurse -File` and repeat for `recon-pipeline`, `report-writing`, `hacking-the-cloud`, `owasp-mas`, `owasp-wstg`, `web-app-hackers-handbook`, `web-security-academy`, `payloads-all-the-things`, `tbhm-methodology`, `hacking-apis`, `owasp-api-security-top-10`, `bug-bounty-bootcamp`, `bug-bounty-playbook`, `web-hacking-101`, `xss-cheat-sheet`, and `zseano-methodology`; record existing filenames and source labels in the register.
-- [ ] **Step 2: Verify current authority pages** from the official source URLs in the spec: OWASP API Top 10, WSTG releases, OWASP GenAI/LLM, FIRST CVSS, OWASP MASTG/MASVS, cloud-provider documentation, PortSwigger topic index, and each recon tool vendor’s official CLI docs.
-- [ ] **Step 3: Record exact source versions and access date**; use versioned or commit-pinned links where the source offers them, and label rolling documentation as rolling.
-- [ ] **Step 4: Map each authority to skills and chapters**; mark book-derived material as historical/foundational where current guidance differs.
-- [ ] **Step 5: Review the register** for every one of the 17 skill names, a 2026 review disposition, and no claim derived only from a search snippet.
+- [x] **Step 1: Inventory current skill files** with `Get-ChildItem C:\Users\luong\.agents\skills\bug-bounty-hunter -Recurse -File` and repeat for `recon-pipeline`, `report-writing`, `hacking-the-cloud`, `owasp-mas`, `owasp-wstg`, `web-app-hackers-handbook`, `web-security-academy`, `payloads-all-the-things`, `tbhm-methodology`, `hacking-apis`, `owasp-api-security-top-10`, `bug-bounty-bootcamp`, `bug-bounty-playbook`, `web-hacking-101`, `xss-cheat-sheet`, and `zseano-methodology`; record existing filenames and source labels in the register.
+- [x] **Step 2: Verify current authority pages** from the official source URLs in the spec: OWASP API Top 10, WSTG releases, OWASP GenAI/LLM, FIRST CVSS, OWASP MASTG/MASVS, cloud-provider documentation, PortSwigger topic index, and each recon tool vendor’s official CLI docs.
+- [x] **Step 3: Record exact source versions and access date**; use versioned or commit-pinned links where the source offers them, and label rolling documentation as rolling.
+- [x] **Step 4: Map each authority to skills and chapters**; mark book-derived material as historical/foundational where current guidance differs.
+- [x] **Step 5: Review the register** for every one of the 17 skill names, a 2026 review disposition, and no claim derived only from a search snippet.
 
 ### Task 2: Make the orchestrator scope-first and deny-by-default
 
@@ -65,12 +67,12 @@
 - Consumes: source register from Task 1.
 - Produces: policy-first session router with exact asset allowlist, per-technique permission, evidence handling, stop conditions, and an AI/LLM route to maintained guidance.
 
-- [ ] **Step 1: Rewrite session-init requirements** to capture policy URL/revision/date, exact inclusions, exclusions, test-account aliases, allowed methods, limits, reporting path, and stop/contact conditions; remove the instruction to put credentials in notes.
-- [ ] **Step 2: Rewrite phase-2 routing** so passive discovery is separated from target traffic and no new hostname or resolved address is treated as in scope automatically.
-- [ ] **Step 3: Add a scope decision rule**: if authorization, ownership, asset matching, or technique permission is absent or ambiguous, stop that stage and re-check policy or contact the program.
-- [ ] **Step 4: Add/adjust router entries** for current API risks, AI/LLM product surfaces, modern web protocols, and severity sources without adding a new skill.
-- [ ] **Step 5: Add focused pressure-review scenarios** for no scope file, discovered-but-unlisted host, shared CDN address, and a found credential; expected behavior is to halt the relevant action and preserve/redact evidence safely.
-- [ ] **Step 6: Check every chapter path named in the router** against the target skill directory before considering this task done.
+- [x] **Step 1: Rewrite session-init requirements** to capture policy URL/revision/date, exact inclusions, exclusions, test-account aliases, allowed methods, limits, reporting path, and stop/contact conditions; remove the instruction to put credentials in notes.
+- [x] **Step 2: Rewrite phase-2 routing** so passive discovery is separated from target traffic and no new hostname or resolved address is treated as in scope automatically.
+- [x] **Step 3: Add a scope decision rule**: if authorization, ownership, asset matching, or technique permission is absent or ambiguous, stop that stage and re-check policy or contact the program.
+- [x] **Step 4: Add/adjust router entries** for current API risks, AI/LLM product surfaces, modern web protocols, and severity sources without adding a new skill.
+- [x] **Step 5: Add focused pressure-review scenarios** for no scope file, discovered-but-unlisted host, shared CDN address, and a found credential; expected behavior is to halt the relevant action and preserve/redact evidence safely.
+- [x] **Step 6: Check every chapter path named in the router** against the target skill directory before considering this task done.
 
 ### Task 3: Harden the recon runbook and its artifacts
 
@@ -85,13 +87,13 @@
 - Consumes: the deny-by-default session contract from Task 2 and vendor docs from Task 1.
 - Produces: current, version-scoped recon procedures whose target lists are allowlist-derived and whose default settings are low-impact.
 
-- [ ] **Step 1: Replace exclusion-only filtering** with exact allowlist membership and explicit subdomain/wildcard semantics; missing allowlist must yield an empty active-target list, never “all discovered hosts.”
-- [ ] **Step 2: Separate stage labels** into third-party passive collection, target HTTP probing, DNS queries, and intrusive/high-volume testing; mark policy permission needed for each.
-- [ ] **Step 3: Remove all-ports Masscan and high-rate examples from the normal run path**; if retained as exceptional reference, put behind an explicit program permission gate, strict target file, low configurable rate, and shared-infrastructure exclusion.
-- [ ] **Step 4: Refresh command syntax against official vendor docs** for tools retained in the runbook; record tool versions, rate limits, timeout, and user-agent in `run.log`.
-- [ ] **Step 5: Update output handling** to redact credentials and personal data, avoid storing full secrets or unnecessary repository clones, and keep sensitive raw results outside normal notes/evidence bundles.
-- [ ] **Step 6: Update monitoring** so every newly discovered asset requires ownership, allowlist, exclusion, and method re-check before active follow-up.
-- [ ] **Step 7: Review edge scenarios**: no allowlist, empty list, wildcard DNS, CDN resolution, 429/service degradation, and a secret found in public code; expected output must be safe and must not continue testing automatically.
+- [x] **Step 1: Replace exclusion-only filtering** with exact allowlist membership and explicit subdomain/wildcard semantics; missing allowlist must yield an empty active-target list, never “all discovered hosts.”
+- [x] **Step 2: Separate stage labels** into third-party passive collection, target HTTP probing, DNS queries, and intrusive/high-volume testing; mark policy permission needed for each.
+- [x] **Step 3: Remove all-ports Masscan and high-rate examples from the normal run path**; if retained as exceptional reference, put behind an explicit program permission gate, strict target file, low configurable rate, and shared-infrastructure exclusion.
+- [x] **Step 4: Refresh command syntax against official vendor docs** for tools retained in the runbook; record tool versions, rate limits, timeout, and user-agent in `run.log`.
+- [x] **Step 5: Update output handling** to redact credentials and personal data, avoid storing full secrets or unnecessary repository clones, and keep sensitive raw results outside normal notes/evidence bundles.
+- [x] **Step 6: Update monitoring** so every newly discovered asset requires ownership, allowlist, exclusion, and method re-check before active follow-up.
+- [x] **Step 7: Review edge scenarios**: no allowlist, empty list, wildcard DNS, CDN resolution, 429/service degradation, and a secret found in public code; expected output must be safe and must not continue testing automatically.
 
 ### Task 4: Refresh API coverage and taxonomy
 
@@ -115,12 +117,12 @@
 - Consumes: current OWASP API Security Top 10 2023 source and tool/vendor docs.
 - Produces: API discovery and test matrix aligned to API1:2023–API10:2023, with backward mapping to useful 2019 content.
 
-- [ ] **Step 1: Add a 2019→2023 crosswalk** distinguishing old excessive-data-exposure/mass-assignment wording from API3:2023 BOPLA and adding sensitive business flows, SSRF, and unsafe API consumption.
-- [ ] **Step 2: Update endpoint inventory and authorization matrices** to cover object, property, function, tenant, and workflow boundaries using only researcher-owned accounts/data.
-- [ ] **Step 3: Refresh GraphQL and API discovery guidance** from current primary project/vendor references, preserving bounded introspection and query-cost limits.
-- [ ] **Step 4: Reframe authentication/rate-limit examples** around low-volume, account-owned checks; mark brute-force, resource exhaustion, and evasion as requiring explicit permission and omit them from quickstarts.
-- [ ] **Step 5: Add source/version/review metadata** to both API skills and update their descriptions/quick references to avoid presenting 2019 categories as current.
-- [ ] **Step 6: Review the crosswalk** against the official API Top 10 edition page and verify that every 2023 risk is routed to a method or explicitly marked as a coverage gap.
+- [x] **Step 1: Add a 2019→2023 crosswalk** distinguishing old excessive-data-exposure/mass-assignment wording from API3:2023 BOPLA and adding sensitive business flows, SSRF, and unsafe API consumption.
+- [x] **Step 2: Update endpoint inventory and authorization matrices** to cover object, property, function, tenant, and workflow boundaries using only researcher-owned accounts/data.
+- [x] **Step 3: Refresh GraphQL and API discovery guidance** from current primary project/vendor references, preserving bounded introspection and query-cost limits.
+- [x] **Step 4: Reframe authentication/rate-limit examples** around low-volume, account-owned checks; mark brute-force, resource exhaustion, and evasion as requiring explicit permission and omit them from quickstarts.
+- [x] **Step 5: Add source/version/review metadata** to both API skills and update their descriptions/quick references to avoid presenting 2019 categories as current.
+- [x] **Step 6: Review the crosswalk** against the official API Top 10 edition page and verify that every 2023 risk is routed to a method or explicitly marked as a coverage gap.
 
 ### Task 5: Refresh WSTG, current web classes, and AI/LLM application testing
 
@@ -136,12 +138,12 @@
 - Consumes: official current WSTG release page, PortSwigger research/labs, OWASP GenAI/LLM guidance, and the historical WAHH source edition.
 - Produces: clear distinction between versioned checklist procedures, maintained modern web research, lab-only methods, and enduring historical mechanics.
 
-- [ ] **Step 1: Verify the latest stable WSTG release** at implementation time; preserve stable versioned test IDs and mark draft/bleeding-edge guidance separately.
-- [ ] **Step 2: Update modern web chapters** for request smuggling/HTTP2, cache and host attacks, race conditions, WebSockets, OAuth/JWT, browser parsing/prototype pollution, and API surfaces from maintained first-party materials.
-- [ ] **Step 3: Expand the existing LLM material** in `web-security-academy/chapters/ch15-logic-race-api-llm.md` with OWASP LLM application risks: indirect/direct prompt injection, sensitive data exposure, unsafe tool/action calls, RAG/vector-store isolation, output handling, and resource risks.
-- [ ] **Step 4: For every protocol/race/LLM technique**, separate lab reproduction from bounty-safe validation; define owned test data, low-impact confirmation, and immediate stop conditions if another user, system, or service could be affected.
-- [ ] **Step 5: Mark WAHH edition-dependent advice** as historical, link updated modern procedures, and retain only its durable mechanics/checklists.
-- [ ] **Step 6: Review source links and route references** for all modified web chapters; no lab page may be represented as authorization to test a live program.
+- [x] **Step 1: Verify the latest stable WSTG release** at implementation time; preserve stable versioned test IDs and mark draft/bleeding-edge guidance separately.
+- [x] **Step 2: Update modern web chapters** for request smuggling/HTTP2, cache and host attacks, race conditions, WebSockets, OAuth/JWT, browser parsing/prototype pollution, and API surfaces from maintained first-party materials.
+- [x] **Step 3: Expand the existing LLM material** in `web-security-academy/chapters/ch15-logic-race-api-llm.md` with OWASP LLM application risks: indirect/direct prompt injection, sensitive data exposure, unsafe tool/action calls, RAG/vector-store isolation, output handling, and resource risks.
+- [x] **Step 4: For every protocol/race/LLM technique**, separate lab reproduction from bounty-safe validation; define owned test data, low-impact confirmation, and immediate stop conditions if another user, system, or service could be affected.
+- [x] **Step 5: Mark WAHH edition-dependent advice** as historical, link updated modern procedures, and retain only its durable mechanics/checklists.
+- [x] **Step 6: Review source links and route references** for all modified web chapters; no lab page may be represented as authorization to test a live program.
 
 ### Task 6: Refresh cloud and mobile methods
 
@@ -155,11 +157,11 @@
 - Consumes: official provider docs, current OWASP MASTG/MASVS references, and the approved scope/credential rules from Tasks 2–3.
 - Produces: current cloud/mobile checks with test-account-only validation and less sensitive data retention.
 
-- [ ] **Step 1: Update cloud service and identity guidance** from official AWS/GCP/Azure docs; record provider/version dependencies and label techniques that require credentialed cloud scope.
-- [ ] **Step 2: Replace “verify a found key” defaults** with non-use reporting/redaction by default; allow a single identity check only when the program policy explicitly authorizes credential validation and the key is confirmed to belong to the target program.
-- [ ] **Step 3: Update storage/IAM validation** to use metadata/policy evidence or researcher-owned canaries; remove persistence, broad enumeration, and customer-data reads from default procedures.
-- [ ] **Step 4: Verify current MASTG/MASVS release references** and update Android/iOS procedures and tool names from official docs; keep backend API testing routed to Task 4.
-- [ ] **Step 5: Review cloud/mobile edge scenarios**: third-party cloud account, leaked credential of unclear ownership, public bucket containing personal data, rooted test device with real user data; each must stop or use a safe substitute.
+- [x] **Step 1: Update cloud service and identity guidance** from official AWS/GCP/Azure docs; record provider/version dependencies and label techniques that require credentialed cloud scope.
+- [x] **Step 2: Replace “verify a found key” defaults** with non-use reporting/redaction by default; allow a single identity check only when the program policy explicitly authorizes credential validation and the key is confirmed to belong to the target program.
+- [x] **Step 3: Update storage/IAM validation** to use metadata/policy evidence or researcher-owned canaries; remove persistence, broad enumeration, and customer-data reads from default procedures.
+- [x] **Step 4: Verify current MASTG/MASVS release references** and update Android/iOS procedures and tool names from official docs; keep backend API testing routed to Task 4.
+- [x] **Step 5: Review cloud/mobile edge scenarios**: third-party cloud account, leaked credential of unclear ownership, public bucket containing personal data, rooted test device with real user data; each must stop or use a safe substitute.
 
 ### Task 7: Update severity, reporting, and evidence handling
 
@@ -175,11 +177,11 @@
 - Consumes: FIRST CVSS v4.0 docs, current program/platform severity policy, source register, and secret-safe evidence rules.
 - Produces: platform-first reports with reproducible steps, minimized evidence, and an optional correctly attributed CVSS vector.
 
-- [ ] **Step 1: Reframe severity precedence** as program rubric first, platform policy second, CVSS only where accepted/requested; remove universal HackerOne/Bugcrowd claims and date-stamp changing platform guidance.
-- [ ] **Step 2: Add CVSS v4.0 guidance** using FIRST metric names and versioned calculator/spec references; retain v3.x only when a program specifically requires it.
-- [ ] **Step 3: Update report template** to require asset/scope match, test account alias, exact impact evidence, minimal PoC, and redaction of tokens/PII.
-- [ ] **Step 4: Update impact library and triage guidance** so claims distinguish demonstrated impact from theoretical escalation and do not encourage further exploitation beyond the policy.
-- [ ] **Step 5: Review example reports** for reproducibility from clean state and absence of credentials, real personal data, and unsupported severity claims.
+- [x] **Step 1: Reframe severity precedence** as program rubric first, platform policy second, CVSS only where accepted/requested; remove universal HackerOne/Bugcrowd claims and date-stamp changing platform guidance.
+- [x] **Step 2: Add CVSS v4.0 guidance** using FIRST metric names and versioned calculator/spec references; retain v3.x only when a program specifically requires it.
+- [x] **Step 3: Update report template** to require asset/scope match, test account alias, exact impact evidence, minimal PoC, and redaction of tokens/PII.
+- [x] **Step 4: Update impact library and triage guidance** so claims distinguish demonstrated impact from theoretical escalation and do not encourage further exploitation beyond the policy.
+- [x] **Step 5: Review example reports** for reproducibility from clean state and absence of credentials, real personal data, and unsupported severity claims.
 
 ### Task 8: Refresh payload, playbook, and legacy methodology skills
 
@@ -203,12 +205,12 @@
 - Consumes: current source register and the modern web/API/cloud guidance completed in Tasks 3–6.
 - Produces: updated reference methods that preserve useful foundational knowledge while not presenting old payloads, examples, or payouts as current/live-safe.
 
-- [ ] **Step 1: Convert payload guidance to context-first selection**: identify parser/context and safe marker, use a single harmless proof first, and distinguish lab payloads from live-program validation.
-- [ ] **Step 2: Review playbook chapters** for brute force, exposed data, cache, SSRF, command execution, and persistence; convert risky actions to theory or explicit permission-gated, test-owned procedures.
-- [ ] **Step 3: Review Bootcamp and methodology chapters** for durable concepts, mark tool/platform examples that have changed, and route modern classes to Tasks 4–6.
-- [ ] **Step 4: Update Web Hacking 101 case studies** as historical examples with no implied present-day payout or severity promise.
-- [ ] **Step 5: Update XSS guidance** against maintained browser/framework/source references; require a harmless proof and avoid session theft or victim delivery.
-- [ ] **Step 6: Add sources and review dates** to all seven skills and resolve every new cross-skill route before finishing the task.
+- [x] **Step 1: Convert payload guidance to context-first selection**: identify parser/context and safe marker, use a single harmless proof first, and distinguish lab payloads from live-program validation.
+- [x] **Step 2: Review playbook chapters** for brute force, exposed data, cache, SSRF, command execution, and persistence; convert risky actions to theory or explicit permission-gated, test-owned procedures.
+- [x] **Step 3: Review Bootcamp and methodology chapters** for durable concepts, mark tool/platform examples that have changed, and route modern classes to Tasks 4–6.
+- [x] **Step 4: Update Web Hacking 101 case studies** as historical examples with no implied present-day payout or severity promise.
+- [x] **Step 5: Update XSS guidance** against maintained browser/framework/source references; require a harmless proof and avoid session theft or victim delivery.
+- [x] **Step 6: Add sources and review dates** to all seven skills and resolve every new cross-skill route before finishing the task.
 
 ### Task 9: Reconcile metadata, descriptions, and the 2026 source index
 
@@ -222,11 +224,11 @@
 - Consumes: all topical task outputs.
 - Produces: consistent skill discovery descriptions, per-skill source metadata, and a cross-skill index for maintenance.
 
-- [ ] **Step 1: Add a compact “reviewed to / sources” section** to all 17 SKILL.md files and point each to its `sources.md`.
-- [ ] **Step 2: Ensure every skill has a substantive update or a clearly reasoned review disposition** in its source file; record exact source/version/date and affected chapters.
-- [ ] **Step 3: Update descriptions and router entries** only where triggers or topical coverage changed; keep the frontmatter name identical to its directory.
-- [ ] **Step 4: Reconcile duplicate coverage** so one skill is the primary method source per class and others are explicitly depth/reference/lab supplements.
-- [ ] **Step 5: Finalize the central source register** with implemented paths, unresolved gaps, and next review triggers.
+- [x] **Step 1: Add a compact “reviewed to / sources” section** to all 17 SKILL.md files and point each to its `sources.md`.
+- [x] **Step 2: Ensure every skill has a substantive update or a clearly reasoned review disposition** in its source file; record exact source/version/date and affected chapters.
+- [x] **Step 3: Update descriptions and router entries** only where triggers or topical coverage changed; keep the frontmatter name identical to its directory.
+- [x] **Step 4: Reconcile duplicate coverage** so one skill is the primary method source per class and others are explicitly depth/reference/lab supplements.
+- [x] **Step 5: Finalize the central source register** with implemented paths, unresolved gaps, and next review triggers.
 
 ### Task 10: Final content and structural review
 
@@ -239,13 +241,13 @@
 - Consumes: all preceding task outputs.
 - Produces: reviewable updated skill set with source dispositions and no unresolved internal routes.
 
-- [ ] **Step 1: Check skill inventory/frontmatter** for all 17 names and required descriptions.
-- [ ] **Step 2: Resolve every local skill/chapter reference** from each SKILL.md and from the bug-bounty-hunter phase/vulnerability routers.
-- [ ] **Step 3: Search for stale/hazardous wording** including “no exclusions = all in scope,” credentials in notes, unqualified “almost always in-scope,” high-rate defaults, and universal CVSS/platform claims; manually inspect and fix every occurrence.
+- [x] **Step 1: Check skill inventory/frontmatter** for all 17 names and required descriptions.
+- [x] **Step 2: Resolve every local skill/chapter reference** from each SKILL.md and from the bug-bounty-hunter phase/vulnerability routers.
+- [x] **Step 3: Search for stale/hazardous wording** including “no exclusions = all in scope,” credentials in notes, unqualified “almost always in-scope,” high-rate defaults, and universal CVSS/platform claims; manually inspect and fix every occurrence.
 - [ ] **Step 4: Run the existing generated-skill scanner** on each modified skill, inspect each warning at the cited line, and record a disposition in the source register.
 - [ ] **Step 5: Run the approved scope pressure scenarios** from Tasks 2, 3, and 6 against the updated guidance; record whether the agent halts, narrows, or uses test-owned data as expected.
-- [ ] **Step 6: Read the final source register and router once end-to-end**; confirm no undocumented source/version assumptions remain and no live target was tested.
-- [ ] **Step 7: Report completion** with skill coverage, source cutoff, check outcomes, warnings/dispositions, and known gaps.
+- [x] **Step 6: Read the final source register and router once end-to-end**; confirm no undocumented source/version assumptions remain and no live target was tested.
+- [x] **Step 7: Report completion** with skill coverage, source cutoff, check outcomes, warnings/dispositions, and known gaps.
 
 ### Task 11: Integrate engagement organization and templates
 
@@ -259,14 +261,14 @@
 - Consumes: the approved addendum and scope/evidence rules from Tasks 2–3 and 7.
 - Produces: optional reusable engagement workspace guidance, a finding lifecycle/template, a safe pre-report gate, and an evidence checklist integrated into existing skills.
 
-- [ ] **Step 1: Add the engagement snapshot/workspace concept** to the router/session checklist: dated policy snapshot, exact in-scope and excluded assets, permitted methods, limits, stop conditions, and account aliases only.
-- [ ] **Step 2: Ensure recon output distinguishes verified assets from unverified leads** and records provenance; never auto-promote discovered hosts into the active target allowlist.
-- [ ] **Step 3: Add finding lifecycle and compact finding/submission templates** covering reproducibility, scope evidence, demonstrated impact, evidence index, report ID, status, and next action; never put credentials or user data in trackers.
-- [ ] **Step 4: Add the candidate validation gate** before report drafting. A failed gate stops that candidate or marks it inconclusive; it does not halt unrelated authorized engagement work.
-- [ ] **Step 5: Add evidence hygiene checks** for screenshots, HARs, request/response bodies, secrets, and incidental personal data. Verify sanitized artifacts; do not rely on header-only filters or preserve unnecessary raw captures.
-- [ ] **Step 6: Adapt templates to the active platform's current policy and taxonomy**; do not copy outdated universal severity assumptions or unsafe upstream examples involving real-user data.
-- [ ] **Step 7: Preserve attribution/license requirements for any copied upstream text; prefer original wording based on the concepts and record source links.**
-- [ ] **Step 8: Confirm the additions are discoverable from the router and do not conflict with the core deny-by-default authorization contract.**
+- [x] **Step 1: Add the engagement snapshot/workspace concept** to the router/session checklist: dated policy snapshot, exact in-scope and excluded assets, permitted methods, limits, stop conditions, and account aliases only.
+- [x] **Step 2: Ensure recon output distinguishes verified assets from unverified leads** and records provenance; never auto-promote discovered hosts into the active target allowlist.
+- [x] **Step 3: Add finding lifecycle and compact finding/submission templates** covering reproducibility, scope evidence, demonstrated impact, evidence index, report ID, status, and next action; never put credentials or user data in trackers.
+- [x] **Step 4: Add the candidate validation gate** before report drafting. A failed gate stops that candidate or marks it inconclusive; it does not halt unrelated authorized engagement work.
+- [x] **Step 5: Add evidence hygiene checks** for screenshots, HARs, request/response bodies, secrets, and incidental personal data. Verify sanitized artifacts; do not rely on header-only filters or preserve unnecessary raw captures.
+- [x] **Step 6: Adapt templates to the active platform's current policy and taxonomy**; do not copy outdated universal severity assumptions or unsafe upstream examples involving real-user data.
+- [x] **Step 7: Preserve attribution/license requirements for any copied upstream text; prefer original wording based on the concepts and record source links.**
+- [x] **Step 8: Confirm the additions are discoverable from the router and do not conflict with the core deny-by-default authorization contract.**
 
 ## Self-Review Notes
 
