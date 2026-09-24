@@ -41,6 +41,15 @@ test('rejects a LocalAppData root inside the repository', async () => {
   }), /outside the repository and OneDrive/);
 });
 
+test('rejects LocalAppData traversal into a protected workspace', async () => {
+  const resolveRuntimePaths = await getResolver();
+  assert.throws(() => resolveRuntimePaths({
+    env: { LOCALAPPDATA: 'C:\\Users\\researcher\\AppData\\Local\\..\\..\\OneDrive\\Desktop\\BugBounty' },
+    repositoryRoot: 'C:\\Users\\researcher\\OneDrive\\Desktop\\BugBounty',
+    oneDriveRoot: 'C:\\Users\\researcher\\OneDrive'
+  }), /outside the repository and OneDrive/);
+});
+
 test('rejects a LocalAppData root inside OneDrive', async () => {
   const resolveRuntimePaths = await getResolver();
   assert.throws(() => resolveRuntimePaths({
