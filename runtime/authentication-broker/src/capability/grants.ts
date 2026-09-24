@@ -71,6 +71,8 @@ interface CapabilitySummary {
 interface CapabilityManagerOptions {
   getPolicy: () => BrokerPolicy | undefined;
   now: () => Date;
+  /** Missing or uncertain verification is equivalent to unverified. */
+  egressIsVerified?: () => boolean;
   /** Required endpoint-level authorization lookup; no default allow exists. */
   authorizeEndpoint: (context: RequestContext & { policyReference: string; origin: string; method: HttpMethod; endpointAuthorizationId: string }) => boolean;
 }
@@ -87,6 +89,7 @@ export class CapabilityManager {
   private readonly capabilities = new Map<ConnectionId, Capability>();
   private readonly getPolicy: () => BrokerPolicy | undefined;
   private readonly now: () => Date;
+  private readonly egressIsVerified: () => boolean;
   private readonly authorizeEndpoint: CapabilityManagerOptions['authorizeEndpoint'];
   private readonly registry: RegistryAccess;
 
@@ -94,11 +97,13 @@ export class CapabilityManager {
     this.registry = registry;
     this.getPolicy = options.getPolicy;
     this.now = options.now;
+    this.egressIsVerified = options.egressIsVerified ?? (() => false);
     this.authorizeEndpoint = options.authorizeEndpoint;
     registry.onClosed?.((connectionId) => this.capabilities.delete(connectionId));
   }
 
   grant(input: GrantInput): CapabilitySummary {
+    if (!this.isEgressVerified()) throw new Error('Capability grant requires verified egress protection');
     const connectionId = input.connectionId as ConnectionId;
     if (!this.registry.list?.().some((record) => record.connectionId === connectionId)) throw new Error('Capability grant requires an open researcher-selected connection');
     const policy = this.currentPolicy();
@@ -147,6 +152,10 @@ export class CapabilityManager {
     if (!policy || policy.policySnapshot.revision !== capability.policyRevision || policy.engagementId !== capability.engagementId) {
       this.capabilities.delete(connectionId);
       return denied('policy changed or is unavailable');
+    }
+    if (!this.isEgressVerified()) {
+      this.capabilities.delete(connectionId);
+      return denied('egress protection is unverified');
     }
     if (nowMs >= capability.expiresAtMs) {
       this.capabilities.delete(connectionId);
@@ -223,6 +232,10 @@ export class CapabilityManager {
     if (!Number.isFinite(nowMs) || !Number.isFinite(capturedAt) || !Number.isFinite(freshUntil) || !Number.isFinite(expiresAt) ||
         capturedAt > nowMs || freshUntil <= nowMs || expiresAt <= nowMs) return undefined;
     return policy;
+  }
+
+  private isEgressVerified(): boolean {
+    try { return this.egressIsVerified() === true; } catch { return false; }
   }
 
   private summary(capability: Capability): CapabilitySummary {

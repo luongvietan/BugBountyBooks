@@ -31,6 +31,7 @@ type CapabilityManager = {
   new(registry: InstanceType<ConnectionRegistry>, options: {
     getPolicy: () => BrokerPolicy | undefined;
     now: () => Date;
+    egressIsVerified?: () => boolean;
     authorizeEndpoint: (context: { engagementId: string; accountAlias: string; origin: string; method: string; endpointAuthorizationId: string }) => boolean;
   }): {
     grant(input: {
@@ -124,6 +125,7 @@ test('denies by default and ignores caller-supplied connection or account identi
   const manager = new CapabilityManager(registry, {
     getPolicy: () => policy(),
     now: () => new Date('2026-09-24T02:00:00.000Z'),
+    egressIsVerified: () => true,
     authorizeEndpoint: () => { endpointChecks += 1; return true; }
   });
 
@@ -140,6 +142,7 @@ test('requires and records the exact current policy reference selected by the re
   const manager = new CapabilityManager(registry, {
     getPolicy: () => policy(),
     now: () => new Date('2026-09-24T02:00:00.000Z'),
+    egressIsVerified: () => true,
     authorizeEndpoint: () => true
   });
 
@@ -160,6 +163,7 @@ test('binds every request to the server-mapped account and explicit policy grant
   const manager = new CapabilityManager(registry, {
     getPolicy: () => policyNow,
     now: () => new Date('2026-09-24T02:00:00.000Z'),
+    egressIsVerified: () => true,
     authorizeEndpoint: (context) => { checkedAccounts.push(context.accountAlias); return context.accountAlias === 'researcher-a'; }
   });
   manager.grant(baseGrant(connectionA));
@@ -195,6 +199,7 @@ test('applies rate, concurrency, body, and budget ceilings before dispatch', asy
   const manager = new CapabilityManager(registry, {
     getPolicy: () => policy(),
     now: () => now,
+    egressIsVerified: () => true,
     authorizeEndpoint: () => true
   });
   manager.grant(baseGrant(connectionId));
@@ -226,7 +231,7 @@ test('revocation, connection close, expiry, and policy staleness remove capabili
     const registry = new ConnectionRegistry({ identityMode: 'stateful' });
     const sessionId = `sdk-${id}`;
     const connectionId = registry.registerSession(sessionId);
-    const manager = new CapabilityManager(registry, { getPolicy, now, authorizeEndpoint: () => true });
+    const manager = new CapabilityManager(registry, { getPolicy, now, egressIsVerified: () => true, authorizeEndpoint: () => true });
     manager.grant(baseGrant(connectionId));
     return { registry, manager, sessionId, connectionId };
   };
@@ -256,4 +261,26 @@ test('revocation, connection close, expiry, and policy staleness remove capabili
     assert.equal(state.manager.acquire(state.sessionId, request()).allowed, false);
     assert.equal(state.manager.hasCapability(state.connectionId), false);
   });
+});
+
+test('requires verified egress to create a capability and revokes it if verification is lost', async () => {
+  const { ConnectionRegistry, CapabilityManager } = await getDependencies();
+  const registry = new ConnectionRegistry({ identityMode: 'stateful' });
+  const sessionId = 'sdk-egress';
+  const connectionId = registry.registerSession(sessionId);
+  let egressVerified = false;
+  const manager = new CapabilityManager(registry, {
+    getPolicy: () => policy(),
+    now: () => new Date('2026-09-24T02:00:00.000Z'),
+    egressIsVerified: () => egressVerified,
+    authorizeEndpoint: () => true
+  });
+
+  assert.throws(() => manager.grant(baseGrant(connectionId)), /egress/);
+  assert.equal(manager.hasCapability(connectionId), false);
+  egressVerified = true;
+  manager.grant(baseGrant(connectionId));
+  egressVerified = false;
+  assert.equal(manager.acquire(sessionId, request()).allowed, false);
+  assert.equal(manager.hasCapability(connectionId), false);
 });
