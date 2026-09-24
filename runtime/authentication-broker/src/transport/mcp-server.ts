@@ -33,6 +33,7 @@ const GrantSchema = z.object({
 }).strict();
 const ConnectionIdSchema = z.object({ connectionId: z.string().min(1).max(128) }).strict();
 const CloseSchema = z.object({ connectionId: z.string().min(1).max(128), confirmed: z.literal(true) }).strict();
+const ConfirmLoginSchema = z.object({ connectionId: z.string().min(1).max(128), confirmed: z.literal(true) }).strict();
 
 export interface BrokerMcpServerOptions {
   /** Binds to 127.0.0.1 only. Port 0 is reserved for integration tests. */
@@ -242,6 +243,42 @@ export async function createBrokerMcpServer(options: BrokerMcpServerOptions): Pr
         const revoked = controlSurface.revoke(connectionId);
         if (revoked) await writeAdminAudit(connectionId, alias, 'capability-revoke', 'result', currentPolicy);
         sendJson(response, 200, { revoked });
+        return;
+      }
+      if (pathname === '/researcher/require-login') {
+        const { connectionId, confirmed } = ConfirmLoginSchema.parse(input);
+        const connection = [...connections.values()].find((candidate) => candidate.connectionId === connectionId);
+        if (!confirmed || !connection?.engagementId || !connection.accountAlias) throw new Error('session not assigned');
+        const currentPolicy = safePolicy(options.getPolicy);
+        if (!currentPolicy) throw new Error('policy unavailable');
+        await writeAdminAudit(connectionId, connection.accountAlias, 'require-attended-login', 'allow', currentPolicy);
+        const result = options.sessions.requireResearcherAction(connection.engagementId, connection.accountAlias);
+        await writeAdminAudit(connectionId, connection.accountAlias, 'require-attended-login', 'result', currentPolicy);
+        sendJson(response, 200, sanitizer.sanitize(result));
+        return;
+      }
+      if (pathname === '/researcher/confirm-login') {
+        const { connectionId, confirmed } = ConfirmLoginSchema.parse(input);
+        const connection = [...connections.values()].find((candidate) => candidate.connectionId === connectionId);
+        if (!confirmed || !connection?.engagementId || !connection.accountAlias) throw new Error('session not assigned');
+        const currentPolicy = safePolicy(options.getPolicy);
+        if (!currentPolicy) throw new Error('policy unavailable');
+        await writeAdminAudit(connectionId, connection.accountAlias, 'confirm-attended-login', 'allow', currentPolicy);
+        const result = options.sessions.confirmAttendedLogin(connection.engagementId, connection.accountAlias);
+        await writeAdminAudit(connectionId, connection.accountAlias, 'confirm-attended-login', 'result', currentPolicy);
+        sendJson(response, 200, sanitizer.sanitize(result));
+        return;
+      }
+      if (pathname === '/researcher/confirm-authorization-review') {
+        const { connectionId, confirmed } = ConfirmLoginSchema.parse(input);
+        const connection = [...connections.values()].find((candidate) => candidate.connectionId === connectionId);
+        if (!confirmed || !connection?.engagementId || !connection.accountAlias) throw new Error('session not assigned');
+        const currentPolicy = safePolicy(options.getPolicy);
+        if (!currentPolicy) throw new Error('policy unavailable');
+        await writeAdminAudit(connectionId, connection.accountAlias, 'confirm-authorization-review', 'allow', currentPolicy);
+        const result = options.sessions.confirmResearcherResume(connection.engagementId, connection.accountAlias);
+        await writeAdminAudit(connectionId, connection.accountAlias, 'confirm-authorization-review', 'result', currentPolicy);
+        sendJson(response, 200, sanitizer.sanitize(result));
         return;
       }
       if (pathname === '/researcher/close') {

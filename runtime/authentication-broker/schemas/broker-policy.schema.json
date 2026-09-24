@@ -174,6 +174,32 @@
         "additionalProperties": false
       }
     },
+    "endpointAuthorizations": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": {
+        "type": "object",
+        "properties": {
+          "accountAlias": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "technique": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "endpointAuthorizationId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "origin": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^/(?!/)[^\\s?#\\\\\\u0000-\\u001f\\u007f]*$"
+          },
+          "policyReference": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "required": ["accountAlias", "technique", "endpointAuthorizationId", "origin", "method", "path", "policyReference"],
+        "additionalProperties": false
+      }
+    },
     "limits": {
       "type": "object",
       "properties": {
@@ -231,6 +257,7 @@
     "refreshOrigins",
     "targetOrigins",
     "grants",
+    "endpointAuthorizations",
     "limits",
     "stopConditions"
   ],

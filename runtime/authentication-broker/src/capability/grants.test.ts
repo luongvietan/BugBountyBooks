@@ -46,6 +46,7 @@ type CapabilityManager = {
     }): { connectionId: string; accountAlias: string; policyRevision: string; policyReference: string; expiresAtUtc: string };
     acquire(sessionId: string | undefined, request: Request): AcquireResult;
     revoke(connectionId: string): boolean;
+    revokeAccount(engagementId: string, accountAlias: string): number;
     hasCapability(connectionId: string): boolean;
   };
 };
@@ -80,6 +81,10 @@ function policy(revision = 'rules-r1'): BrokerPolicy {
     grants: [
       { accountAlias: 'researcher-a', technique: 'read-only mapping', methods: ['GET', 'HEAD'], policyReference: 'Synthetic rules > mapping' },
       { accountAlias: 'researcher-b', technique: 'read-only mapping', methods: ['GET'], policyReference: 'Synthetic rules > mapping' }
+    ],
+    endpointAuthorizations: [
+      { accountAlias: 'researcher-a', technique: 'read-only mapping', endpointAuthorizationId: 'account-read-a', origin: 'https://app.example:443', method: 'GET', path: '/account', policyReference: 'Synthetic rules > mapping' },
+      { accountAlias: 'researcher-b', technique: 'read-only mapping', endpointAuthorizationId: 'account-read-b', origin: 'https://app.example:443', method: 'GET', path: '/account', policyReference: 'Synthetic rules > mapping' }
     ],
     limits: {
       requestsPerSecond: 1,
@@ -149,6 +154,22 @@ test('requires and records the exact current policy reference selected by the re
   assert.throws(() => manager.grant({ ...baseGrant(connectionId), policyReference: 'Unlisted program rule' }), /current policy/);
   const capability = manager.grant(baseGrant(connectionId));
   assert.equal(capability.policyReference, 'Synthetic rules > mapping');
+});
+
+test('allows only one active worker connection per engagement and account', async () => {
+  const { ConnectionRegistry, CapabilityManager } = await getDependencies();
+  const registry = new ConnectionRegistry({ identityMode: 'stateful' });
+  const first = registry.registerSession('sdk-session-account-first');
+  const second = registry.registerSession('sdk-session-account-second');
+  const manager = new CapabilityManager(registry, {
+    getPolicy: () => policy(),
+    now: () => new Date('2026-09-24T02:00:00.000Z'),
+    egressIsVerified: () => true,
+    authorizeEndpoint: () => true
+  });
+  manager.grant(baseGrant(first));
+  assert.throws(() => manager.grant(baseGrant(second)), /already has an active worker/i);
+  assert.equal(manager.grant(baseGrant(first)).connectionId, first, 'the bound worker may renew its own grant');
 });
 
 test('binds every request to the server-mapped account and explicit policy grant', async () => {
@@ -267,6 +288,29 @@ test('revocation, connection close, expiry, and policy staleness remove capabili
     assert.equal(state.manager.acquire(state.sessionId, request()).allowed, false);
     assert.equal(state.manager.hasCapability(state.connectionId), false);
   });
+});
+
+test('revokes the affected account capability after a rate-limit stop without disturbing another account', async () => {
+  const { ConnectionRegistry, CapabilityManager } = await getDependencies();
+  const registry = new ConnectionRegistry({ identityMode: 'stateful' });
+  const sessionA = 'sdk-rate-limit-a';
+  const sessionB = 'sdk-rate-limit-b';
+  const connectionA = registry.registerSession(sessionA);
+  const connectionB = registry.registerSession(sessionB);
+  const manager = new CapabilityManager(registry, {
+    getPolicy: () => policy(), now: () => new Date('2026-09-24T02:00:00.000Z'),
+    egressIsVerified: () => true, authorizeEndpoint: () => true
+  });
+  manager.grant(baseGrant(connectionA));
+  manager.grant({ ...baseGrant(connectionB, 'researcher-b'), tools: ['authorized_request'], accountAlias: 'researcher-b' });
+  assert.equal(manager.revokeAccount('synthetic-demo-2026-09-24', 'researcher-a'), 1);
+  assert.equal(manager.acquire(sessionA, request()).allowed, false);
+  const unaffected = manager.acquire(sessionB, request({ accountAlias: 'researcher-a' }));
+  assert.equal(unaffected.allowed, true, 'worker B remains bound to its own account');
+  assert.equal(unaffected.context?.accountAlias, 'researcher-b');
+  unaffected.release?.();
+  assert.equal(manager.hasCapability(connectionA), false);
+  assert.equal(manager.hasCapability(connectionB), true);
 });
 
 test('requires verified egress to create a capability and revokes it if verification is lost', async () => {

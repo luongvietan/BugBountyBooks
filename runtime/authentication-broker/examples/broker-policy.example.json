@@ -19,6 +19,17 @@
       "policyReference": "Synthetic rules > authorized read-only test"
     }
   ],
+  "endpointAuthorizations": [
+    {
+      "accountAlias": "researcher-a",
+      "technique": "read-only application mapping",
+      "endpointAuthorizationId": "account-read",
+      "origin": "https://app.example:443",
+      "method": "GET",
+      "path": "/account",
+      "policyReference": "Synthetic rules > authorized read-only test"
+    }
+  ],
   "limits": {
     "requestsPerSecond": 1,
     "maxConcurrentRequests": 1,

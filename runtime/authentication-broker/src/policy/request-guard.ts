@@ -135,7 +135,7 @@ export class WorkerRequestGuard {
         if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.hash) return deny('navigation URL is invalid');
         origin = normalizeOrigin(`${target.protocol}//${target.hostname}:${target.port || (target.protocol === 'https:' ? '443' : '80')}`);
       } catch { return deny('navigation URL is invalid'); }
-      if (!capability.methods.some((method) => method === 'GET' || method === 'HEAD') || !capability.origins.includes(origin)) {
+      if (!capability.methods.includes('GET') || !capability.origins.includes(origin)) {
         return deny('navigation is outside capability');
       }
       const admitted = this.capabilities.acquireWorkerRequest(sessionId, {
@@ -150,7 +150,7 @@ export class WorkerRequestGuard {
     }
 
     if (toolName === 'observe_page' || toolName === 'act_on_observed_element') {
-      if (!capability.origins.length || !capability.methods.some((method) => method === 'GET' || method === 'HEAD')) {
+      if (!capability.origins.length || !capability.methods.includes('GET')) {
         return deny('page tools exceed read-only capability');
       }
     }

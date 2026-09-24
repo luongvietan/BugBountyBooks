@@ -1,6 +1,6 @@
-import { request as playwrightRequest, type APIRequestContext } from 'playwright';
+import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import { normalizeOrigin } from '../policy/origin.js';
-import { BROKER_PROXY_HOST, BROKER_PROXY_PORT, BROKER_PROXY_URL } from '../network/egress-preflight.js';
+import { BROKER_PROXY_HOST, BROKER_PROXY_PORT } from '../network/egress-preflight.js';
 
 export interface BrowserCookie {
   readonly name: string;
@@ -33,6 +33,8 @@ export interface AuthorizedApiScope {
   readonly technique: string;
   readonly endpointAuthorizationId: string;
   readonly authorizeEndpoint: (request: { origin: string; method: string; path: string; technique: string; endpointAuthorizationId: string }) => boolean;
+  readonly reserveRequest?: () => Promise<(() => void) | undefined>;
+  readonly onResponseStatus?: (status: number) => void;
 }
 
 export interface ApiRequestResult {
@@ -40,6 +42,24 @@ export interface ApiRequestResult {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
   readonly bodySuppressed: boolean;
+}
+
+interface FetchResponseLike {
+  readonly status: number;
+  readonly headers: {
+    get(name: string): string | null;
+    getSetCookie?: () => string[];
+  };
+  readonly body: ReadableStream<Uint8Array> | null;
+}
+
+interface FetchInitLike {
+  readonly method: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body?: string | Buffer;
+  readonly redirect: 'manual';
+  readonly signal: AbortSignal;
+  readonly dispatcher?: Dispatcher;
 }
 
 export interface ApiRequestAdapterOptions {
@@ -54,22 +74,12 @@ export interface ApiRequestAdapterOptions {
   readonly maxRequestBodyBytes: number;
   readonly maxResponseBytes: number;
   readonly isEgressVerified: () => boolean;
-  /** Injected only by tests. Production always uses Playwright's APIRequest factory. */
-  readonly newContext?: (options: unknown) => Promise<ApiRequestContextLike>;
-  /** Requires an injected loopback integration fixture; never configurable from a worker tool. */
+  /** Replaced only by loopback tests. Never accepted from a worker request. */
+  readonly testOnlyFetch?: (url: string, init: FetchInitLike) => Promise<FetchResponseLike>;
+  /** Dynamic proxy ports are allowed only with the test-only fetch seam. */
   readonly testOnlyAllowEphemeralProxy?: boolean;
   readonly timeoutMs?: number;
   readonly maxRedirects?: number;
-}
-
-interface ApiRequestContextLike {
-  fetch(url: string, options: unknown): Promise<{
-    status(): number;
-    headersArray(): Promise<Array<{ name: string; value: string }>>;
-    body(): Promise<Buffer>;
-  }>;
-  storageState(): Promise<{ cookies: BrowserCookie[] }>;
-  dispose(): Promise<void>;
 }
 
 interface ParsedTarget {
@@ -78,7 +88,7 @@ interface ParsedTarget {
   readonly path: string;
 }
 
-export function createApiRequestAdapter(options: ApiRequestAdapterOptions): { request(input: unknown): Promise<ApiRequestResult> } {
+export function createApiRequestAdapter(options: ApiRequestAdapterOptions): { request(input: unknown, scope?: AuthorizedApiScope): Promise<ApiRequestResult> } {
   const allowedOrigins = new Set(options.allowedOrigins.map((origin) => {
     try {
       const normalized = normalizeOrigin(origin);
@@ -88,7 +98,7 @@ export function createApiRequestAdapter(options: ApiRequestAdapterOptions): { re
   }));
   const allowedMethods = new Set(options.allowedMethods);
   const allowedRequestHeaders = new Set(options.allowedRequestHeaders.map((header) => header.toLowerCase()));
-  const proxyPort = parseLoopbackProxyPort(options.proxy.server, options.testOnlyAllowEphemeralProxy === true && options.newContext !== undefined);
+  const proxyPort = parseLoopbackProxyPort(options.proxy.server, options.testOnlyAllowEphemeralProxy === true);
   if (!allowedOrigins.size || !allowedMethods.size || !options.technique || !options.endpointAuthorizationId ||
       !Number.isInteger(options.maxRequestBodyBytes) || options.maxRequestBodyBytes < 0 || options.maxRequestBodyBytes > 65_536 ||
       !Number.isInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > 2_097_152 ||
@@ -102,12 +112,11 @@ export function createApiRequestAdapter(options: ApiRequestAdapterOptions): { re
     if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(header) || isCredentialOrRoutingHeader(header)) throw new Error('API request header policy is invalid');
   }
 
-  const createContext = options.newContext ?? ((contextOptions: unknown) => playwrightRequest.newContext(contextOptions as Parameters<typeof playwrightRequest.newContext>[0]) as Promise<unknown> as Promise<ApiRequestContextLike>);
   const timeoutMs = options.timeoutMs ?? 15_000;
   const maxRedirects = options.maxRedirects ?? 5;
 
   return {
-    async request(input: unknown): Promise<ApiRequestResult> {
+    async request(input: unknown, scope?: AuthorizedApiScope): Promise<ApiRequestResult> {
       const request = parseRequest(input, allowedRequestHeaders, options.maxRequestBodyBytes);
       if (!allowedMethods.has(request.method)) throw new Error('API request method is not authorized');
       assertEgress(options.isEgressVerified);
@@ -131,53 +140,65 @@ export function createApiRequestAdapter(options: ApiRequestAdapterOptions): { re
 
         const jarCookies = await options.context.cookies(target.url.toString());
         const safeCookies = validateCookies(jarCookies);
-        let apiContext: ApiRequestContextLike | undefined;
-        try {
-          apiContext = await createContext({
-            proxy: { server: `http://${BROKER_PROXY_HOST}:${proxyPort}`, username: options.proxy.username, password: options.proxy.password },
-            storageState: { cookies: safeCookies, origins: [] },
-            maxRedirects: 0,
-            timeout: timeoutMs,
-            ignoreHTTPSErrors: false
-          });
-          const response = await apiContext.fetch(target.url.toString(), {
-            method: currentMethod,
-            ...(currentBody !== undefined ? { data: currentBody } : {}),
-            ...(request.headers ? { headers: request.headers } : {}),
-            timeout: timeoutMs,
-            maxRedirects: 0,
-            maxRetries: 0,
-            failOnStatusCode: false,
-            ignoreHTTPSErrors: false
-          });
-          finalStatus = response.status();
-          const responseHeaders = await response.headersArray();
-          const cookieState = await apiContext.storageState();
-          await syncCookies(options.context, safeCookies, validateCookies(cookieState.cookies));
+        const cookie = cookieHeader(safeCookies);
+        const headers: Record<string, string> = { 'accept-encoding': 'identity', ...request.headers };
+        if (cookie) headers.cookie = cookie;
+        const fetchInit: FetchInitLike = Object.freeze({
+          method: currentMethod,
+          headers: Object.freeze(headers),
+          ...(currentBody !== undefined ? { body: currentBody } : {}),
+          redirect: 'manual',
+          signal: AbortSignal.timeout(timeoutMs)
+        });
 
-          const location = headerValue(responseHeaders, 'location');
-          finalHeaders = safeResponseHeaders(responseHeaders);
+        let proxyAgent: ProxyAgent | undefined;
+        let releaseRequest: (() => void) | undefined;
+        try {
+          assertEgress(options.isEgressVerified);
+          if (scope?.reserveRequest) {
+            releaseRequest = await scope.reserveRequest();
+            if (!releaseRequest) throw new Error('API network request budget is exhausted or unavailable');
+          } else if (!options.testOnlyFetch) {
+            throw new Error('API network request budget is unavailable');
+          }
+          let response: FetchResponseLike;
+          if (options.testOnlyFetch) {
+            response = await options.testOnlyFetch(target.url.toString(), fetchInit);
+          } else {
+            proxyAgent = new ProxyAgent({
+              uri: `http://${BROKER_PROXY_HOST}:${proxyPort}`,
+              token: `Basic ${Buffer.from(`${options.proxy.username}:${options.proxy.password}`, 'utf8').toString('base64')}`
+            });
+            response = await undiciFetch(target.url.toString(), {
+              ...fetchInit,
+              dispatcher: proxyAgent
+            } as Parameters<typeof undiciFetch>[1]) as unknown as FetchResponseLike;
+          }
+          finalStatus = response.status;
+          try { scope?.onResponseStatus?.(finalStatus); } catch { throw new Error('API response status could not be handled safely'); }
+          const responseCookies = responseCookiesFor(response.headers, target.url);
+          if (responseCookies.length) await syncCookies(options.context, safeCookies, mergeCookies(safeCookies, responseCookies));
+          const location = response.headers.get('location') ?? undefined;
+          finalHeaders = safeResponseHeaders(response.headers);
           if ([301, 302, 303, 307, 308].includes(finalStatus) && location && (currentMethod === 'GET' || currentMethod === 'HEAD') && hop < maxRedirects) {
             let next: ParsedTarget;
-            try { next = parseTarget(new URL(location, target.url).toString()); } catch { break; }
-            if (!allowedOrigins.has(next.origin) || !allowedMethods.has(currentMethod)) break;
-            target = next;
-            continue;
+            try { next = parseTarget(new URL(location, target.url).toString()); } catch { next = undefined as unknown as ParsedTarget; }
+            if (next && allowedOrigins.has(next.origin) && allowedMethods.has(currentMethod) &&
+                safeAuthorize(options.authorize, { origin: next.origin, method: currentMethod, path: next.path, technique: options.technique, endpointAuthorizationId: options.endpointAuthorizationId })) {
+              try { await response.body?.cancel(); } catch { /* the redirect response body is not needed */ }
+              target = next;
+              continue;
+            }
           }
-
-          const contentLength = Number(headerValue(responseHeaders, 'content-length'));
-          if (Number.isFinite(contentLength) && contentLength > options.maxResponseBytes) {
-            bodySuppressed = true;
-          } else {
-            const body = await response.body();
-            if (body.length > options.maxResponseBytes) bodySuppressed = true;
-            else finalBody = body.toString('utf8');
-          }
+          const bounded = await readCappedBody(response.body, options.maxResponseBytes);
+          bodySuppressed = bounded.bodySuppressed;
+          finalBody = bounded.body;
           break;
         } catch {
           throw new Error('API request outcome is unknown; no retry or automatic replay occurred');
         } finally {
-          try { await apiContext?.dispose(); } catch { /* disposal errors do not expose request context */ }
+          try { releaseRequest?.(); } catch { /* budget release cannot retry the request */ }
+          try { await proxyAgent?.close(); } catch { /* connection cleanup cannot retry the request */ }
         }
       }
       return Object.freeze({ status: finalStatus, headers: finalHeaders, body: bodySuppressed ? '' : finalBody, bodySuppressed });
@@ -230,8 +251,10 @@ function validateCookies(value: readonly BrowserCookie[]): BrowserCookie[] {
   if (!Array.isArray(value)) throw new Error('Cookie state is unavailable');
   const result: BrowserCookie[] = [];
   for (const cookie of value) {
-    if (!cookie || typeof cookie.name !== 'string' || !cookie.name || typeof cookie.value !== 'string' ||
-        typeof cookie.domain !== 'string' || !cookie.domain || typeof cookie.path !== 'string' || !cookie.path.startsWith('/') ||
+    if (!cookie || typeof cookie.name !== 'string' || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(cookie.name) ||
+        typeof cookie.value !== 'string' || /[\r\n\u0000-\u001f\u007f;]/.test(cookie.value) ||
+        typeof cookie.domain !== 'string' || !cookie.domain || /[\r\n\u0000-\u001f\u007f;]/.test(cookie.domain) ||
+        typeof cookie.path !== 'string' || !cookie.path.startsWith('/') || /[\r\n\u0000-\u001f\u007f;]/.test(cookie.path) ||
         typeof cookie.expires !== 'number' || !Number.isFinite(cookie.expires) || typeof cookie.httpOnly !== 'boolean' ||
         typeof cookie.secure !== 'boolean' || !['Strict', 'Lax', 'None'].includes(cookie.sameSite) || cookie.partitionKey !== undefined) {
       throw new Error('Cookie state cannot be safely synchronized');
@@ -242,30 +265,127 @@ function validateCookies(value: readonly BrowserCookie[]): BrowserCookie[] {
   return result;
 }
 
+function cookieHeader(cookies: readonly BrowserCookie[]): string {
+  return cookies.map(({ name, value }) => `${name}=${value}`).join('; ');
+}
+
+function responseCookiesFor(headers: FetchResponseLike['headers'], target: URL): BrowserCookie[] {
+  const rawCookies = headers.getSetCookie?.() ?? [];
+  return rawCookies.map((raw) => parseSetCookie(raw, target));
+}
+
+function parseSetCookie(raw: string, target: URL): BrowserCookie {
+  if (typeof raw !== 'string' || raw.length > 8192 || /[\r\n\u0000]/.test(raw)) throw new Error('API response cookie cannot be synchronized');
+  const parts = raw.split(';');
+  const first = parts.shift() ?? '';
+  const separator = first.indexOf('=');
+  const name = first.slice(0, separator).trim();
+  const value = first.slice(separator + 1).trim();
+  if (separator <= 0 || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n\u0000-\u001f\u007f;]/.test(value)) {
+    throw new Error('API response cookie cannot be synchronized');
+  }
+  let domain = target.hostname.toLowerCase();
+  let domainAttribute = false;
+  let cookiePath = defaultCookiePath(target.pathname);
+  let expires = -1;
+  let maxAge: number | undefined;
+  let httpOnly = false;
+  let secure = false;
+  let sameSite: BrowserCookie['sameSite'] = 'Lax';
+  for (const part of parts) {
+    const index = part.indexOf('=');
+    const key = (index < 0 ? part : part.slice(0, index)).trim().toLowerCase();
+    const attribute = index < 0 ? '' : part.slice(index + 1).trim();
+    if (key === 'domain') {
+      const candidate = attribute.replace(/^\.+/, '').toLowerCase();
+      if (!candidate || !(target.hostname.toLowerCase() === candidate || target.hostname.toLowerCase().endsWith(`.${candidate}`))) {
+        throw new Error('API response cookie cannot be synchronized');
+      }
+      domain = `.${candidate}`;
+      domainAttribute = true;
+    } else if (key === 'path' && attribute.startsWith('/')) cookiePath = attribute;
+    else if (key === 'expires') {
+      const timestamp = Date.parse(attribute);
+      if (Number.isFinite(timestamp)) expires = Math.floor(timestamp / 1000);
+    } else if (key === 'max-age' && /^-?\d+$/.test(attribute)) maxAge = Number(attribute);
+    else if (key === 'httponly') httpOnly = true;
+    else if (key === 'secure') secure = true;
+    else if (key === 'samesite') {
+      const normalized = attribute.toLowerCase();
+      if (normalized === 'strict') sameSite = 'Strict';
+      else if (normalized === 'none') sameSite = 'None';
+      else if (normalized === 'lax') sameSite = 'Lax';
+    } else if (key === 'partitioned') throw new Error('Partitioned API cookies are not supported');
+  }
+  if (maxAge !== undefined) expires = maxAge <= 0 ? 0 : Math.floor(Date.now() / 1000) + maxAge;
+  if ((sameSite === 'None' && !secure) || (name.startsWith('__Secure-') && !secure) ||
+      (name.startsWith('__Host-') && (!secure || domainAttribute || cookiePath !== '/'))) {
+    throw new Error('API response cookie cannot be synchronized');
+  }
+  return Object.freeze({ name, value, domain, path: cookiePath, expires, httpOnly, secure, sameSite });
+}
+
+function defaultCookiePath(pathname: string): string {
+  if (!pathname.startsWith('/') || pathname === '/') return '/';
+  const lastSlash = pathname.lastIndexOf('/');
+  return lastSlash <= 0 ? '/' : pathname.slice(0, lastSlash);
+}
+
+function mergeCookies(previous: readonly BrowserCookie[], received: readonly BrowserCookie[]): BrowserCookie[] {
+  const result = [...previous];
+  for (const cookie of received) {
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      const current = result[index]!;
+      if (current.name === cookie.name && current.domain === cookie.domain && current.path === cookie.path) result.splice(index, 1);
+    }
+    if (cookie.expires < 0 || cookie.expires > Math.floor(Date.now() / 1000)) result.push(cookie);
+  }
+  return result;
+}
+
 async function syncCookies(context: ApiCookieJar, previous: readonly BrowserCookie[], updated: readonly BrowserCookie[]): Promise<void> {
   for (const cookie of previous) await context.clearCookies({ name: cookie.name, domain: cookie.domain, path: cookie.path });
   if (updated.length) await context.addCookies([...updated]);
 }
 
-function safeResponseHeaders(headers: readonly { name: string; value: string }[]): Readonly<Record<string, string>> {
-  const selected = new Set(['content-type', 'cache-control', 'etag']);
-  const result: Record<string, string> = {};
-  for (const { name, value } of headers) {
-    const lower = name.toLowerCase();
-    if (selected.has(lower) && !isCredentialOrRoutingHeader(lower) && !/[\r\n\u0000]/.test(value) && result[lower] === undefined) result[lower] = value;
+async function readCappedBody(body: ReadableStream<Uint8Array> | null, maximumBytes: number): Promise<{ body: string; bodySuppressed: boolean }> {
+  if (!body) return { body: '', bodySuppressed: false };
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      if (next.value.byteLength > maximumBytes - bytes) {
+        try { await reader.cancel(); } catch { /* response body is discarded */ }
+        return { body: '', bodySuppressed: true };
+      }
+      bytes += next.value.byteLength;
+      chunks.push(next.value);
+    }
+  } catch {
+    throw new Error('API response body could not be read safely');
+  } finally {
+    try { reader.releaseLock(); } catch { /* stream may already be cancelled */ }
   }
-  return Object.freeze(result);
+  return { body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), bytes).toString('utf8'), bodySuppressed: false };
 }
 
-function headerValue(headers: readonly { name: string; value: string }[], name: string): string | undefined {
-  return headers.find((header) => header.name.toLowerCase() === name)?.value;
+function safeResponseHeaders(headers: FetchResponseLike['headers']): Readonly<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const name of ['content-type', 'cache-control', 'etag']) {
+    const value = headers.get(name);
+    if (typeof value === 'string' && !/[\r\n\u0000]/.test(value)) result[name] = value;
+  }
+  return Object.freeze(result);
 }
 
 function isCredentialOrRoutingHeader(name: string): boolean {
   return name === 'cookie' || name === 'cookie2' || name === 'authorization' || name === 'proxy-authorization' ||
     name === 'proxy-authenticate' || name === 'host' || name === 'forwarded' || name === 'connection' ||
     name === 'content-length' || name === 'transfer-encoding' || name === 'upgrade' || name === 'proxy-connection' ||
-    name.startsWith('proxy-') || name.startsWith('x-forwarded-');
+    name === 'accept-encoding' || name.startsWith('proxy-') || name.startsWith('x-forwarded-');
 }
 
 function safeAuthorize(authorize: ApiRequestAdapterOptions['authorize'], input: Parameters<ApiRequestAdapterOptions['authorize']>[0]): boolean {
@@ -285,6 +405,5 @@ function parseLoopbackProxyPort(server: string, allowEphemeral: boolean): number
       url.search || url.hash || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('API request proxy must be the broker loopback proxy');
   if (port === BROKER_PROXY_PORT) return port;
   if (!allowEphemeral) throw new Error('API request proxy must use the fixed broker loopback port');
-  // Dynamic ports are accepted only when a test injected the request-context factory.
   return port;
 }

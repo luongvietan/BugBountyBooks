@@ -12,7 +12,7 @@ type ProxyModule = {
     port?: number;
     resolver: (hostname: string) => Promise<readonly string[]>;
     resolveCapability: (proxyAuthorization: string | undefined) => ProxyContext | undefined;
-    authorize: (context: ProxyContext, request: { origin: string; method: string; targetPath: string; technique: string }) => boolean | { allowed: boolean; release?: () => void };
+    authorize: (context: ProxyContext, request: { origin: string; method: string; targetPath: string; technique: string }) => boolean | { allowed: boolean; isCurrent?: () => boolean; release?: () => void };
     destinationConnectorForTests?: (destination: { hostname: string; address: string; port: number; family: 4 | 6 }) => Socket;
     maxHeaderBytes?: number;
   }) => {
@@ -260,6 +260,35 @@ test('supports scoped HTTPS CONNECT tunneling without decrypting TLS or forwardi
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(upstreamBytes.includes('synthetic-tls-client-hello'), true);
     assert.equal(upstreamBytes.includes(token), false);
+  } finally {
+    await proxy.close();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
+
+test('stops an established CONNECT tunnel when its proxy capability is revoked', async () => {
+  const createOriginProxy = await getProxyFactory();
+  let current = true;
+  let upstreamBytes = '';
+  const upstream = createTcpServer((socket) => socket.on('data', (chunk) => { upstreamBytes += chunk.toString('latin1'); }));
+  const upstreamAddress = await listen(upstream);
+  const proxy = createOriginProxy({
+    port: 0,
+    resolver: async () => ['8.8.8.8'],
+    resolveCapability: (header) => header === `Bearer ${token}` ? context([httpsOrigin]) : undefined,
+    authorize: () => ({ allowed: true, isCurrent: () => current }),
+    destinationConnectorForTests: () => createConnection({ host: '127.0.0.1', port: upstreamAddress.port })
+  });
+  try {
+    const address = await proxy.start();
+    const connection = await openConnect(address.address, address.port,
+      `CONNECT app.example:443 HTTP/1.1\r\nHost: app.example:443\r\nProxy-Authorization: Bearer ${token}\r\n\r\n`);
+    assert.match(connection.response.split('\r\n')[0] ?? '', /^HTTP\/1\.1 200/);
+    current = false;
+    connection.socket.write('revoked-tunnel-payload');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(upstreamBytes.includes('revoked-tunnel-payload'), false);
+    connection.socket.destroy();
   } finally {
     await proxy.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));

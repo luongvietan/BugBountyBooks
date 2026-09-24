@@ -29,6 +29,10 @@ function policy(): BrokerPolicy {
       { accountAlias: 'researcher-a', technique: 'read-only mapping', methods: ['GET'], policyReference: 'Synthetic rules > mapping' },
       { accountAlias: 'researcher-b', technique: 'read-only mapping', methods: ['GET'], policyReference: 'Synthetic rules > mapping B' }
     ],
+    endpointAuthorizations: [
+      { accountAlias: 'researcher-a', technique: 'read-only mapping', endpointAuthorizationId: 'account-read', origin: 'https://app.example:443', method: 'GET', path: '/account', policyReference: 'Synthetic rules > mapping' },
+      { accountAlias: 'researcher-b', technique: 'read-only mapping', endpointAuthorizationId: 'account-read-b', origin: 'https://app.example:443', method: 'GET', path: '/account', policyReference: 'Synthetic rules > mapping B' }
+    ],
     limits: { requestsPerSecond: 1, maxConcurrentRequests: 1, maxRequestsPerCapability: 7, maxRequestBodyBytes: 0, expiresAtUtc: '2026-09-24T08:00:00.000Z' },
     stopConditions: ['stop if real user data appears']
   } as BrokerPolicy;
@@ -52,6 +56,7 @@ test('serves exactly seven worker tools over stateful MCP and keeps researcher c
   const pageCalls: string[] = [];
   const contexts: Array<{ accountAlias: string; closed: number }> = [];
   const apiAccounts: string[] = [];
+  let nextResearcherBStatus: number | undefined;
   const sessions = new SessionManager({
     profileRoot: 'C:\\Synthetic\\Broker\\profiles',
     getPolicy: () => currentPolicy,
@@ -68,21 +73,25 @@ test('serves exactly seven worker tools over stateful MCP and keeps researcher c
         activateTarget: () => undefined,
         pauseTarget: () => undefined,
         setTargetScope: (origins: readonly string[]) => { pageCalls.push(`scope:${origins.join(',')}`); },
+        setApiScope: (origins: readonly string[], methods: readonly string[], technique: string) => { pageCalls.push(`api-scope:${origins.join(',')}:${methods.join(',')}:${technique}`); },
         navigate: async (url: string) => { pageCalls.push(`navigate:${url}`); return { navigated: true }; },
         observePage: async () => ({ title: 'Synthetic account page', url: 'https://app.example/account' }),
         clickObservedLink: async (id: string) => { pageCalls.push(`click:${id}`); return { navigated: true }; },
         fillResearcherControlledField: async (_id: string, value: string) => { pageCalls.push(`fill:${value}`); return { filled: true }; },
         authorizedRequest: async () => {
           apiAccounts.push(accountAlias);
+          const status = accountAlias === 'researcher-b' ? nextResearcherBStatus : undefined;
+          if (status !== undefined) nextResearcherBStatus = undefined;
           return {
-            status: 200,
+            status: status ?? 200,
             body: JSON.stringify({ account: accountAlias, password: 'synthetic-password-secret', accessToken: 'synthetic-access-token', message: 'Bearer synthetic-bearer-secret' }),
             headers: { 'Set-Cookie': 'session=synthetic-cookie-secret', 'content-type': 'application/json' }
           };
         },
         close: async () => { state.closed += 1; }
       };
-    }
+    },
+    onAuthorizationStop: ({ engagementId, accountAlias }) => { capabilityManager.revokeAccount(engagementId, accountAlias); }
   });
   const audit = new MetadataAuditLog({ now: () => new Date(nowMs) });
   const app = await createBrokerMcpServer({
@@ -174,9 +183,16 @@ test('serves exactly seven worker tools over stateful MCP and keeps researcher c
   assert.equal((await callTool('session_status')).state, 'not_configured');
   assert.equal((await callTool('session_status', {}, sessionIdB!)).state, 'not_configured');
   assert.equal((await callTool('open_login', { origin: 'https://login.example:443' })).state, 'user_action_required');
-  sessions.confirmAttendedLogin(currentPolicy.engagementId, 'researcher-a');
+  const confirmLogin = async (connectionId: string) => fetch(`${base}/researcher/confirm-login`, {
+    method: 'POST', headers: { origin: controlOrigin, 'content-type': 'application/json' },
+    body: JSON.stringify({ connectionId, confirmed: true })
+  });
+  const confirmA = await confirmLogin(connectionId);
+  assert.equal(confirmA.status, 200);
+  assert.equal((await confirmA.json() as { state: string }).state, 'active');
   assert.equal((await callTool('open_login', { origin: 'https://login.example:443' }, sessionIdB!)).state, 'user_action_required');
-  sessions.confirmAttendedLogin(currentPolicy.engagementId, 'researcher-b');
+  const confirmB = await confirmLogin(connectionB);
+  assert.equal(confirmB.status, 200);
   assert.equal((await callTool('observe_page')).title, 'Synthetic account page');
   assert.equal((await callTool('navigate', { url: 'https://evil.example/path' })).isError, true);
   assert.equal((await callTool('navigate', { url: 'https://app.example:443/account' })).navigated, true);
@@ -192,11 +208,39 @@ test('serves exactly seven worker tools over stateful MCP and keeps researcher c
   const apiResultB = await callTool('authorized_request', { url: 'https://app.example:443/account', method: 'GET', endpointAuthorizationId: 'account-read-b' }, sessionIdB!);
   assert.equal((apiResultB.body as { account?: string }).account, 'researcher-b');
   assert.deepEqual(apiAccounts, ['researcher-a', 'researcher-b']);
+  nextResearcherBStatus = 403;
+  const forbidden = await callTool('authorized_request', { url: 'https://app.example:443/account', method: 'GET', endpointAuthorizationId: 'account-read-b' }, sessionIdB!);
+  assert.equal(forbidden.status, 403);
+  assert.equal((await callTool('session_status', {}, sessionIdB!)).isError, true, '403 revokes the account capability pending researcher review');
+  const confirmAuthorizationReview = await fetch(`${base}/researcher/confirm-authorization-review`, {
+    method: 'POST', headers: { origin: controlOrigin, 'content-type': 'application/json' },
+    body: JSON.stringify({ connectionId: connectionB, confirmed: true })
+  });
+  assert.equal(confirmAuthorizationReview.status, 200);
+  assert.equal((await confirmAuthorizationReview.json() as { state: string }).state, 'active');
+  const regrantAfterReview = await fetch(`${base}/researcher/grant`, {
+    method: 'POST', headers: { origin: controlOrigin, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      connectionId: connectionB, accountAlias: 'researcher-b', role: 'tester',
+      tools: ['session_status', 'open_login', 'authorized_request', 'revoke_capability'],
+      technique: 'read-only mapping', policyReference: 'Synthetic rules > mapping B', methods: ['GET'], origins: ['https://app.example:443']
+    })
+  });
+  assert.equal(regrantAfterReview.status, 200);
+  assert.equal((await callTool('session_status', {}, sessionIdB!)).state, 'active');
   assert.equal(((await callTool('authorized_request', { url: 'https://app.example:443/account', method: 'GET', endpointAuthorizationId: 'account-read' })).body as { account?: string }).account, 'researcher-a');
   assert.equal(apiAccounts.filter((account) => account === 'researcher-a').length, 2);
   assert.equal((await callTool('authorized_request', { url: 'https://app.example:443/account', method: 'GET', endpointAuthorizationId: 'account-read' })).isError, true, 'the capability budget must deny before API dispatch');
   assert.equal(apiAccounts.filter((account) => account === 'researcher-a').length, 2);
   assert.equal((await callTool('revoke_capability')).revoked, true);
+  const requireLogin = await fetch(`${base}/researcher/require-login`, {
+    method: 'POST', headers: { origin: controlOrigin, 'content-type': 'application/json' },
+    body: JSON.stringify({ connectionId: connectionB, confirmed: true })
+  });
+  assert.equal(requireLogin.status, 200);
+  assert.equal((await requireLogin.json() as { state: string }).state, 'user_action_required');
+  assert.equal((await callTool('open_login', { origin: 'https://login.example:443' }, sessionIdB!)).state, 'user_action_required');
+  assert.equal((await confirmLogin(connectionB)).status, 200);
   const closeResponse = await fetch(`${base}/researcher/close`, {
     method: 'POST', headers: { origin: controlOrigin, 'content-type': 'application/json' },
     body: JSON.stringify({ connectionId, confirmed: true })

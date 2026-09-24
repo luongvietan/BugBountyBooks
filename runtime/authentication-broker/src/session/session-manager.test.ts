@@ -38,11 +38,12 @@ type SessionManagerApi = {
       targetOrigins: readonly string[];
       proxyCredentials: { username: string; password: string };
     }) => Promise<TestContext>;
-    onRateLimit?: (input: { engagementId: string; accountAlias: string }) => void;
+    onAuthorizationStop?: (input: { engagementId: string; accountAlias: string; status: 403 | 429 }) => void;
   }) => {
     start: (engagementId: string, accountAlias: string) => Promise<SessionSnapshot>;
     openLogin: (engagementId: string, accountAlias: string, origin: string) => Promise<SessionSnapshot>;
     confirmAttendedLogin: (engagementId: string, accountAlias: string) => SessionSnapshot;
+    confirmResearcherResume: (engagementId: string, accountAlias: string) => SessionSnapshot;
     getSnapshot: (engagementId: string, accountAlias: string) => SessionSnapshot | undefined;
     authorizedRequest: (engagementId: string, accountAlias: string, request: unknown) => Promise<{ status: number; body: string }>;
     requireResearcherAction: (engagementId: string, accountAlias: string) => SessionSnapshot;
@@ -68,6 +69,7 @@ function policy(revision = 'revision-1', engagementId = 'engagement-a'): BrokerP
     refreshOrigins: [],
     targetOrigins: ['https://app.example:443'],
     grants: [{ accountAlias: 'researcher-a', technique: 'read-only mapping', methods: ['GET'], policyReference: 'section 4' }],
+    endpointAuthorizations: [],
     limits: { requestsPerSecond: 1, maxConcurrentRequests: 1, maxRequestsPerCapability: 10, maxRequestBodyBytes: 1024, expiresAtUtc: '2026-09-25T00:00:00Z' },
     stopConditions: ['stop if real user data appears']
   } as BrokerPolicy;
@@ -75,7 +77,7 @@ function policy(revision = 'revision-1', engagementId = 'engagement-a'): BrokerP
 
 function makeManager(
   SessionManager: SessionManagerApi['SessionManager'],
-  options: { mode?: 'persistent' | 'memory'; statuses?: Array<number | Error>; revision?: string; openCalls?: string[]; created?: Array<Record<string, unknown>>; rateLimits?: number[]; closeFails?: boolean; lockReleases?: number[] } = {}
+  options: { mode?: 'persistent' | 'memory'; statuses?: Array<number | Error>; revision?: string; openCalls?: string[]; created?: Array<Record<string, unknown>>; rateLimits?: number[]; closeFails?: boolean; pauseFails?: boolean; lockReleases?: number[]; budgetLimit?: number } = {}
 ) {
   const clock = new Date('2026-09-24T02:00:00.000Z');
   const created: Array<Record<string, unknown>> = options.created ?? [];
@@ -86,7 +88,11 @@ function makeManager(
   let statusIndex = 0;
   const manager = new SessionManager({
     profileRoot: 'C:\\Synthetic\\BugHuntSkills\\AuthenticationBroker\\profiles',
-    getPolicy: (engagementId) => policy(options.revision, engagementId),
+    getPolicy: (engagementId) => {
+      const value = policy(options.revision, engagementId);
+      if (options.budgetLimit !== undefined) value.limits.maxRequestsPerCapability = options.budgetLimit;
+      return value;
+    },
     now: () => clock,
     prepareProfileDirectory: async () => undefined,
     selectProfileMode: async () => ({
@@ -99,6 +105,7 @@ function makeManager(
       created.push(input as unknown as Record<string, unknown>);
       return {
         openLogin: async (origin) => { openCalls.push(origin); },
+        pauseTarget: () => { if (options.pauseFails) throw new Error('synthetic pause failure'); },
         close: async () => { if (options.closeFails) throw new Error('synthetic close failure'); },
         authorizedRequest: async () => {
           const next = statuses[statusIndex++];
@@ -107,7 +114,7 @@ function makeManager(
         }
       };
     },
-    onRateLimit: () => { rateLimits.push(Date.now()); }
+    onAuthorizationStop: ({ status }) => { rateLimits.push(status); }
   });
   return { manager, created, openCalls, rateLimits, lockReleases, apiCalls: () => statusIndex };
 }
@@ -187,9 +194,15 @@ test('handles 401, 403, 429, and timeout without automatic request replay', asyn
   await state.manager.openLogin('engagement-a', 'researcher-a', 'https://login.identity.example:443');
   state.manager.confirmAttendedLogin('engagement-a', 'researcher-a');
   assert.equal((await state.manager.authorizedRequest('engagement-a', 'researcher-a', {})).status, 403);
-  assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'active');
+  assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'user_action_required');
+  assert.deepEqual(state.rateLimits, [403]);
+  await assert.rejects(state.manager.openLogin('engagement-a', 'researcher-a', 'https://login.identity.example:443'), /not awaiting attended sign-in/i);
+  assert.throws(() => state.manager.confirmAttendedLogin('engagement-a', 'researcher-a'), /not awaiting researcher confirmation/i);
+  assert.equal(state.manager.confirmResearcherResume('engagement-a', 'researcher-a').state, 'active');
   assert.equal((await state.manager.authorizedRequest('engagement-a', 'researcher-a', {})).status, 429);
-  assert.equal(state.rateLimits.length, 1);
+  assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'user_action_required');
+  assert.deepEqual(state.rateLimits, [403, 429]);
+  assert.equal(state.manager.confirmResearcherResume('engagement-a', 'researcher-a').state, 'active');
   await assert.rejects(state.manager.authorizedRequest('engagement-a', 'researcher-a', {}), /outcome is unknown/i);
   assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'user_action_required');
   assert.equal(state.apiCalls(), 3);
@@ -202,6 +215,48 @@ test('handles 401, 403, 429, and timeout without automatic request replay', asyn
   assert.equal((await expired.manager.authorizedRequest('engagement-a', 'researcher-a', {})).status, 401);
   assert.equal(expired.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'expired');
   assert.equal(expired.apiCalls(), 1);
+});
+
+test('pauses and revokes account work when the managed browser reports a target 403', async () => {
+  const { SessionManager } = await getApi();
+  const state = makeManager(SessionManager);
+  await state.manager.start('engagement-a', 'researcher-a');
+  await state.manager.openLogin('engagement-a', 'researcher-a', 'https://login.identity.example:443');
+  state.manager.confirmAttendedLogin('engagement-a', 'researcher-a');
+  const reportStatus = state.created[0]?.onTargetResponseStatus as ((status: number) => void) | undefined;
+  assert.equal(typeof reportStatus, 'function');
+  reportStatus!(403);
+  assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'user_action_required');
+  assert.deepEqual(state.rateLimits, [403]);
+  assert.equal(state.manager.confirmResearcherResume('engagement-a', 'researcher-a').state, 'active');
+});
+
+test('revokes capabilities on 403 even when the managed context cannot confirm it paused', async () => {
+  const { SessionManager } = await getApi();
+  const state = makeManager(SessionManager, { pauseFails: true });
+  await state.manager.start('engagement-a', 'researcher-a');
+  await state.manager.openLogin('engagement-a', 'researcher-a', 'https://login.identity.example:443');
+  state.manager.confirmAttendedLogin('engagement-a', 'researcher-a');
+  const reportStatus = state.created[0]?.onTargetResponseStatus as ((status: number) => void) | undefined;
+  reportStatus!(403);
+  assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'error');
+  assert.deepEqual(state.rateLimits, [403], 'account capability revocation callback still runs on uncertain pause');
+});
+
+test('does not reset the account network budget when a profile is closed and recreated', async () => {
+  const { SessionManager } = await getApi();
+  const state = makeManager(SessionManager, { budgetLimit: 1 });
+  await state.manager.start('engagement-a', 'researcher-a');
+  const firstReserve = state.created[0]?.reserveTargetRequest as (() => Promise<(() => void) | undefined>) | undefined;
+  assert.equal(typeof firstReserve, 'function');
+  const used = await firstReserve!();
+  assert.equal(typeof used, 'function');
+  used!();
+  await state.manager.revoke('engagement-a', 'researcher-a', true);
+  await state.manager.start('engagement-a', 'researcher-a');
+  const secondReserve = state.created[1]?.reserveTargetRequest as (() => Promise<(() => void) | undefined>) | undefined;
+  assert.equal(await secondReserve!(), undefined, 'account budget remains exhausted across context recreation');
+  await state.manager.closeAll();
 });
 
 test('hands challenges to the researcher and revokes the context and capability state', async () => {

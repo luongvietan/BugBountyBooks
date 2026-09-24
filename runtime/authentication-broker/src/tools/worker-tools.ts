@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { MetadataAuditLog } from '../audit/metadata-log.js';
-import type { WorkerToolName } from '../capability/grants.js';
+import type { HttpMethod, WorkerToolName } from '../capability/grants.js';
 import type { WorkerRequestGuard, WorkerRequestDecision } from '../policy/request-guard.js';
 import type { OutputSanitizerOptions } from '../output/sanitize.js';
 import { createOutputSanitizer } from '../output/sanitize.js';
@@ -52,7 +52,7 @@ export function registerWorkerTools(server: McpServer, dependencies: WorkerToolD
     inputSchema: z.object({}).strict()
   }, async (_input, context) => execute('observe_page', context.sessionId, undefined, async (decision) => {
     const bound = requireContext(decision);
-    return dependencies.sessions.observePage(bound.engagementId, bound.accountAlias, bound.origins);
+    return dependencies.sessions.observePage(bound.engagementId, bound.accountAlias, bound.origins, pageMethods(bound.methods));
   }));
 
   server.registerTool('navigate', {
@@ -63,7 +63,7 @@ export function registerWorkerTools(server: McpServer, dependencies: WorkerToolD
     const bound = requireContext(decision);
     const normalized = decision.request?.url;
     if (typeof normalized !== 'string') throw new Error('Navigation was not authorized');
-    return dependencies.sessions.navigate(bound.engagementId, bound.accountAlias, normalized, bound.origins);
+    return dependencies.sessions.navigate(bound.engagementId, bound.accountAlias, normalized, bound.origins, pageMethods(bound.methods));
   }));
 
   server.registerTool('act_on_observed_element', {
@@ -78,10 +78,10 @@ export function registerWorkerTools(server: McpServer, dependencies: WorkerToolD
     const bound = requireContext(decision);
     if (action === 'click_link') {
       if (value !== undefined) throw new Error('Link action input is invalid');
-      return dependencies.sessions.clickObservedLink(bound.engagementId, bound.accountAlias, id, bound.origins);
+      return dependencies.sessions.clickObservedLink(bound.engagementId, bound.accountAlias, id, bound.origins, pageMethods(bound.methods));
     }
     if (typeof value !== 'string') throw new Error('Field action input is invalid');
-    return dependencies.sessions.fillResearcherControlledField(bound.engagementId, bound.accountAlias, id, value, bound.origins);
+    return dependencies.sessions.fillResearcherControlledField(bound.engagementId, bound.accountAlias, id, value, bound.origins, pageMethods(bound.methods));
   }));
 
   server.registerTool('authorized_request', {
@@ -118,7 +118,7 @@ export function registerWorkerTools(server: McpServer, dependencies: WorkerToolD
 
   server.registerTool('revoke_capability', {
     title: 'Revoke this capability',
-    description: 'Stop this worker connection from making further target requests.',
+    description: 'Revoke the shared session for this engagement and account. This stops this worker and interrupts other work using the same account; a researcher must review and grant access again.',
     inputSchema: z.object({}).strict()
   }, async (_input, context) => execute('revoke_capability', context.sessionId, undefined, async (decision) => {
     const sessionId = context.sessionId;
@@ -199,6 +199,10 @@ export function registerWorkerTools(server: McpServer, dependencies: WorkerToolD
 function requireContext(decision: WorkerRequestDecision) {
   if (!decision.context) throw new Error('Capability context is unavailable');
   return decision.context;
+}
+
+function pageMethods(methods: readonly HttpMethod[]): HttpMethod[] {
+  return methods.filter((method) => method === 'GET' || method === 'HEAD');
 }
 
 function responseStatus(value: unknown): number | undefined {

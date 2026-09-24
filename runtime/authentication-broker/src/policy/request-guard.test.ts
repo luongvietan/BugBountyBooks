@@ -48,6 +48,30 @@ test('denies missing capability, malformed/off-origin URL, method, endpoint, and
   }
 });
 
+test('denies page tools when a capability has HEAD but not GET', async () => {
+  const { WorkerRequestGuard } = await import('./request-guard.js');
+  const calls: string[] = [];
+  const workerCapability = {
+    context: { connectionId: 'connection-a', engagementId: 'engagement-a', accountAlias: 'researcher-a', policyRevision: 'revision-a', role: 'mapper', technique: 'mapping', policyReference: 'rules', methods: ['HEAD'], origins: ['https://app.example:443'] },
+    tools: ['observe_page', 'navigate'], methods: ['HEAD'], origins: ['https://app.example:443'], maxRequestBodyBytes: 0,
+    authorizeEndpoint: () => false
+  };
+  const capabilities = {
+    workerCapabilityFor: () => workerCapability,
+    acquireTool: () => { calls.push('tool'); return { allowed: true, reason: 'authorized' }; },
+    acquireWorkerRequest: (_sessionId: string, request: { method: string }) => {
+      calls.push(`request:${request.method}`);
+      return { allowed: request.method === 'HEAD', reason: 'denied' };
+    },
+    hasOpenWorkerIdentity: () => true,
+    connectionIdForWorker: () => 'connection-a'
+  };
+  const guard = new WorkerRequestGuard(capabilities as never);
+  assert.equal(guard.authorize('worker-a', 'observe_page', {}).allowed, false);
+  assert.equal(guard.authorize('worker-a', 'navigate', { url: 'https://app.example/account' }).allowed, false);
+  assert.deepEqual(calls, []);
+});
+
 test('ignores caller identity, account, technique, and method-override fields', async () => {
   const { evaluateRequest } = await getApi();
   const result = evaluateRequest({

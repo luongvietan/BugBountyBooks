@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { createConnection, type Socket } from 'node:net';
 import test from 'node:test';
-import { request as playwrightRequest } from 'playwright';
 
 type Cookie = {
   name: string; value: string; domain: string; path: string; expires: number;
@@ -14,15 +13,12 @@ type CookieJar = {
   clearCookies: (filter?: { name?: string; domain?: string; path?: string }) => Promise<void>;
 };
 type ApiResponse = { status: number; headers: Readonly<Record<string, string>>; body: string; bodySuppressed: boolean };
-type TestApiRequestContext = {
-  fetch: (url: string, options: unknown) => Promise<{
-    status: () => number;
-    headersArray: () => Promise<Array<{ name: string; value: string }>>;
-    body: () => Promise<Buffer>;
-  }>;
-  storageState: () => Promise<{ cookies: Cookie[] }>;
-  dispose: () => Promise<void>;
+type TestResponse = {
+  status: number;
+  headers: { get: (name: string) => string | null; getSetCookie?: () => string[] };
+  body: ReadableStream<Uint8Array> | null;
 };
+type TestFetch = (url: string, init: { method: string; headers: Readonly<Record<string, string>>; body?: string | Buffer; redirect: 'manual'; signal: AbortSignal }) => Promise<TestResponse>;
 type ApiRequestModule = {
   createApiRequestAdapter: (options: {
     context: CookieJar;
@@ -37,8 +33,8 @@ type ApiRequestModule = {
     maxResponseBytes: number;
     isEgressVerified: () => boolean;
     testOnlyAllowEphemeralProxy?: boolean;
-    newContext?: (options: unknown) => Promise<TestApiRequestContext>;
-  }) => { request: (input: unknown) => Promise<ApiResponse> };
+    testOnlyFetch?: TestFetch;
+  }) => { request: (input: unknown, scope?: { reserveRequest?: () => Promise<(() => void) | undefined>; onResponseStatus?: (status: number) => void }) => Promise<ApiResponse> };
 };
 
 async function getApi(): Promise<ApiRequestModule> {
@@ -61,6 +57,20 @@ async function listen<T extends HttpServer>(server: T): Promise<{ address: strin
 function sendSyntheticResponse(_request: IncomingMessage, response: ServerResponse, body = 'synthetic account response'): void {
   response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Set-Cookie': 'refresh=synthetic-refresh-secret; Path=/; HttpOnly; SameSite=Lax', Connection: 'close' });
   response.end(body);
+}
+
+function syntheticResponse(status: number, headers: Record<string, string | string[]> = {}, body = ''): TestResponse {
+  const values = new Map<string, string>();
+  const cookies: string[] = [];
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === 'set-cookie') cookies.push(...(Array.isArray(value) ? value : [value]));
+    else values.set(name.toLowerCase(), Array.isArray(value) ? value.join(', ') : value);
+  }
+  const bytes = Buffer.from(body);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { if (bytes.length) controller.enqueue(bytes); controller.close(); }
+  });
+  return { status, headers: { get: (name) => values.get(name.toLowerCase()) ?? null, getSetCookie: () => cookies }, body: stream };
 }
 
 class SyntheticCookieJar implements CookieJar {
@@ -118,14 +128,6 @@ test('routes each account API request through the pinned origin proxy and keeps 
   const capabilityA = { username: 'session-a', password: 'synthetic-proxy-capability-secret-a' };
   const { proxy, diagnostics } = await createProxy(mock, mockAddress.port, capabilityA);
   const proxyAddress = await proxy.start();
-  const createTestRequestContext = async (requestOptions: unknown): Promise<TestApiRequestContext> => {
-    const configured = requestOptions as { proxy: { server: string; username: string; password: string }; ignoreHTTPSErrors: boolean; maxRedirects: number; storageState: { origins: unknown[] } };
-    assert.equal(configured.ignoreHTTPSErrors, false);
-    assert.equal(configured.maxRedirects, 0);
-    assert.equal(configured.proxy.server, `http://${proxyAddress.address}:${proxyAddress.port}`);
-    assert.deepEqual(configured.storageState.origins, []);
-    return await playwrightRequest.newContext(requestOptions as Parameters<typeof playwrightRequest.newContext>[0]) as unknown as TestApiRequestContext;
-  };
   const contextA = new SyntheticCookieJar('synthetic-cookie-researcher-a');
   const adapterA = createApiRequestAdapter({
     context: contextA,
@@ -133,7 +135,7 @@ test('routes each account API request through the pinned origin proxy and keeps 
     authorize: (request) => request.origin === origin && request.method === 'GET' && request.endpointAuthorizationId === 'account-read',
     allowedOrigins: [origin], allowedMethods: ['GET'], allowedRequestHeaders: [], technique: 'read-only mapping',
     endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 1024, maxResponseBytes: 4096, isEgressVerified: () => true,
-    testOnlyAllowEphemeralProxy: true, newContext: createTestRequestContext
+    testOnlyAllowEphemeralProxy: true
   });
   const contextB = new SyntheticCookieJar('synthetic-cookie-researcher-b');
   const adapterB = createApiRequestAdapter({
@@ -142,11 +144,12 @@ test('routes each account API request through the pinned origin proxy and keeps 
     authorize: (request) => request.origin === origin && request.method === 'GET' && request.endpointAuthorizationId === 'account-read',
     allowedOrigins: [origin], allowedMethods: ['GET'], allowedRequestHeaders: [], technique: 'read-only mapping',
     endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 1024, maxResponseBytes: 4096, isEgressVerified: () => true,
-    testOnlyAllowEphemeralProxy: true, newContext: createTestRequestContext
+    testOnlyAllowEphemeralProxy: true
   });
   try {
-    const resultA = await adapterA.request({ url: `${origin}/account`, method: 'GET' });
-    const resultB = await adapterB.request({ url: `${origin}/account`, method: 'GET' });
+    const exchangeBudget = { reserveRequest: async () => () => undefined };
+    const resultA = await adapterA.request({ url: `${origin}/account`, method: 'GET' }, exchangeBudget);
+    const resultB = await adapterB.request({ url: `${origin}/account`, method: 'GET' }, exchangeBudget);
     assert.equal(resultA.status, 200, JSON.stringify(diagnostics()));
     assert.equal(resultA.body, 'researcher-a');
     assert.equal(resultB.body, 'researcher-b');
@@ -173,7 +176,7 @@ test('rejects credential and routing headers, off-scope origins, and unverified 
     authorize: () => true,
     allowedOrigins: [origin], allowedMethods: ['GET', 'POST'], allowedRequestHeaders: ['content-type'], technique: 'authorized api test',
     endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 64, maxResponseBytes: 128, isEgressVerified: () => egressVerified,
-    newContext: async () => { factoryCalls += 1; throw new Error('must not be called'); }
+    testOnlyFetch: async () => { factoryCalls += 1; throw new Error('must not be called'); }
   });
   await assert.rejects(adapter.request({ url: `${origin}/account`, method: 'GET' }), /egress/i);
   egressVerified = true;
@@ -192,10 +195,7 @@ test('checks redirect hops separately and never replays a state-changing request
     authorize: ({ origin: requestedOrigin, method }) => { redirectCalls.push(`${requestedOrigin} ${method}`); return requestedOrigin === origin && method === 'GET'; },
     allowedOrigins: [origin, 'http://other.example:8080'], allowedMethods: ['GET', 'POST'], allowedRequestHeaders: ['content-type'], technique: 'read-only mapping',
     endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 64, maxResponseBytes: 128, isEgressVerified: () => true,
-    newContext: async () => ({
-      fetch: async () => ({ status: () => 302, headersArray: async () => [{ name: 'location', value: 'http://other.example:8080/next' }], body: async () => Buffer.from('redirect') }),
-      storageState: async () => ({ cookies: [] }), dispose: async () => undefined
-    })
+    testOnlyFetch: async () => syntheticResponse(302, { location: 'http://other.example:8080/next' }, 'redirect')
   });
   const getResult = await adapter.request({ url: `${origin}/start`, method: 'GET' });
   assert.equal(getResult.status, 302);
@@ -208,12 +208,83 @@ test('checks redirect hops separately and never replays a state-changing request
     authorize: () => { postCalls += 1; return true; },
     allowedOrigins: [origin], allowedMethods: ['POST'], allowedRequestHeaders: ['content-type'], technique: 'authorized api test',
     endpointAuthorizationId: 'post', maxRequestBodyBytes: 64, maxResponseBytes: 128, isEgressVerified: () => true,
-    newContext: async () => ({
-      fetch: async () => ({ status: () => 302, headersArray: async () => [{ name: 'location', value: `${origin}/confirm` }], body: async () => Buffer.from('redirect') }),
-      storageState: async () => ({ cookies: [] }), dispose: async () => undefined
-    })
+    testOnlyFetch: async () => syntheticResponse(302, { location: `${origin}/confirm` }, 'redirect')
   });
   const postResult = await postAdapter.request({ url: `${origin}/submit`, method: 'POST', body: 'synthetic=true', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   assert.equal(postResult.status, 302);
   assert.equal(postCalls, 1);
+});
+
+test('reserves and releases a separate network budget lease for each authorized redirect hop', async () => {
+  const { createApiRequestAdapter } = await getApi();
+  let dispatches = 0;
+  let reservations = 0;
+  let releases = 0;
+  const adapter = createApiRequestAdapter({
+    context: new SyntheticCookieJar('synthetic-cookie'),
+    proxy: { server: 'http://127.0.0.1:8766', username: 'session-a', password: 'synthetic-proxy-capability-secret-a' },
+    authorize: ({ origin: requestOrigin, method }) => requestOrigin === origin && method === 'GET',
+    allowedOrigins: [origin], allowedMethods: ['GET'], allowedRequestHeaders: [], technique: 'read-only mapping',
+    endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 64, maxResponseBytes: 128, isEgressVerified: () => true,
+    testOnlyFetch: async () => ++dispatches === 1
+      ? syntheticResponse(302, { location: `${origin}/next` }, 'redirect')
+      : syntheticResponse(200, {}, 'synthetic done')
+  });
+  const result = await adapter.request({ url: `${origin}/start`, method: 'GET' }, {
+    reserveRequest: async () => { reservations += 1; return () => { releases += 1; }; }
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body, 'synthetic done');
+  assert.equal(dispatches, 2);
+  assert.equal(reservations, 2);
+  assert.equal(releases, 2);
+});
+
+test('reports auth and stop statuses as soon as response headers arrive, before reading the body', async () => {
+  const { createApiRequestAdapter } = await getApi();
+  let reportedStatus = 0;
+  let bodyRead = false;
+  const adapter = createApiRequestAdapter({
+    context: new SyntheticCookieJar('synthetic-cookie'),
+    proxy: { server: 'http://127.0.0.1:8766', username: 'session-a', password: 'synthetic-proxy-capability-secret-a' },
+    authorize: () => true,
+    allowedOrigins: [origin], allowedMethods: ['GET'], allowedRequestHeaders: [], technique: 'read-only mapping',
+    endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 64, maxResponseBytes: 128, isEgressVerified: () => true,
+    testOnlyFetch: async () => ({
+      status: 403,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) { assert.equal(reportedStatus, 403, 'status handling runs before body consumption'); bodyRead = true; controller.enqueue(new Uint8Array([1])); controller.close(); }
+      }, { highWaterMark: 0 })
+    })
+  });
+  const result = await adapter.request({ url: `${origin}/account`, method: 'GET' }, { onResponseStatus: (status) => { reportedStatus = status; } });
+  assert.equal(reportedStatus, 403);
+  assert.equal(bodyRead, true);
+  assert.equal(result.status, 403);
+});
+
+test('streams response bodies and suppresses an oversized body without Content-Length', async () => {
+  const { createApiRequestAdapter } = await getApi();
+  let cancelled = false;
+  const adapter = createApiRequestAdapter({
+    context: new SyntheticCookieJar('synthetic-cookie'),
+    proxy: { server: 'http://127.0.0.1:8766', username: 'session-a', password: 'synthetic-proxy-capability-secret-a' },
+    authorize: () => true,
+    allowedOrigins: [origin], allowedMethods: ['GET'], allowedRequestHeaders: [], technique: 'read-only mapping',
+    endpointAuthorizationId: 'account-read', maxRequestBodyBytes: 64, maxResponseBytes: 64, isEgressVerified: () => true,
+    testOnlyFetch: async () => ({
+      status: 200,
+      headers: { get: () => null, getSetCookie: () => [] },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new Uint8Array(48)); controller.enqueue(new Uint8Array(48)); },
+        cancel() { cancelled = true; }
+      })
+    })
+  });
+  const result = await adapter.request({ url: `${origin}/large`, method: 'GET' });
+  assert.equal(result.status, 200);
+  assert.equal(result.body, '');
+  assert.equal(result.bodySuppressed, true);
+  assert.equal(cancelled, true);
 });

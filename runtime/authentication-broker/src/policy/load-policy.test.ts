@@ -16,6 +16,7 @@ type PolicyFixture = {
   refreshOrigins: Array<{ origin: string; methods: string[]; policyReference: string }>;
   targetOrigins: string[];
   grants: Array<{ accountAlias: string; technique: string; methods: string[]; policyReference: string }>;
+  endpointAuthorizations: Array<{ accountAlias: string; technique: string; endpointAuthorizationId: string; origin: string; method: string; path: string; policyReference: string }>;
   limits: { requestsPerSecond: number; maxConcurrentRequests: number; maxRequestsPerCapability: number; maxRequestBodyBytes: number; expiresAtUtc: string };
   stopConditions: string[];
   [key: string]: unknown;
@@ -24,6 +25,7 @@ type PolicyFixture = {
 type LoadedPolicy = {
   targetOrigins: readonly string[];
   grants: readonly unknown[];
+  endpointAuthorizations: readonly unknown[];
   policySnapshot: Readonly<{ url: string }>;
 };
 
@@ -46,6 +48,10 @@ function validPolicy(): PolicyFixture {
       technique: 'read-only application mapping',
       methods: ['GET', 'HEAD'],
       policyReference: 'Synthetic rules > authorized read-only test'
+    }],
+    endpointAuthorizations: [{
+      accountAlias: 'researcher-a', technique: 'read-only application mapping', endpointAuthorizationId: 'account-read',
+      origin: 'https://APP.example', method: 'GET', path: '/account', policyReference: 'Synthetic rules > authorized read-only test'
     }],
     limits: {
       requestsPerSecond: 1,
@@ -89,8 +95,31 @@ test('loads a current policy, canonicalizes origins, and freezes nested data', a
     assert.equal(Object.isFrozen(policy), true);
     assert.equal(Object.isFrozen(policy.targetOrigins), true);
     assert.equal(Object.isFrozen(policy.grants), true);
+    assert.deepEqual(policy.endpointAuthorizations, [{
+      accountAlias: 'researcher-a', technique: 'read-only application mapping', endpointAuthorizationId: 'account-read',
+      origin: 'https://app.example:443', method: 'GET', path: '/account', policyReference: 'Synthetic rules > authorized read-only test'
+    }]);
+    assert.equal(Object.isFrozen(policy.endpointAuthorizations), true);
     assert.equal(Object.isFrozen(policy.policySnapshot), true);
   });
+});
+
+test('rejects endpoint authorizations that exceed or duplicate the documented grant', async (t) => {
+  const loadPolicy = await getLoader();
+  const cases: Array<[string, (policy: PolicyFixture) => void]> = [
+    ['endpoint origin is not a target', (policy) => { policy.endpointAuthorizations[0]!.origin = 'https://outside.example:443'; }],
+    ['endpoint has no matching method grant', (policy) => { policy.endpointAuthorizations[0]!.method = 'POST'; }],
+    ['endpoint has no matching source reference', (policy) => { policy.endpointAuthorizations[0]!.policyReference = 'Unlisted rule'; }],
+    ['endpoint identifier is duplicated', (policy) => { policy.endpointAuthorizations.push({ ...policy.endpointAuthorizations[0]! }); }],
+    ['endpoint path contains a query', (policy) => { policy.endpointAuthorizations[0]!.path = '/account?admin=true'; }]
+  ];
+  for (const [name, mutate] of cases) {
+    await t.test(name, async () => {
+      const input = validPolicy();
+      mutate(input);
+      await withPolicy(input, (filePath) => assert.rejects(loadPolicy(filePath, NOW)));
+    });
+  }
 });
 
 test('rejects missing grants, references, limits, and unknown fields', async (t) => {

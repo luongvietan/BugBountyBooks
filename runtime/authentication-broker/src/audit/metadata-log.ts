@@ -16,6 +16,7 @@ export interface MetadataAuditEvent {
 export interface MetadataAuditLogOptions {
   readonly write?: (line: string) => void | Promise<void>;
   readonly now?: () => Date;
+  readonly retainedRecords?: number;
 }
 
 const ALLOWED_KEYS = new Set(['engagementId', 'connectionId', 'accountAlias', 'policyRevision', 'origin', 'method', 'category', 'decision', 'status', 'latencyMs']);
@@ -24,10 +25,15 @@ export class MetadataAuditLog {
   private readonly records: Readonly<Record<string, string | number | undefined>>[] = [];
   private readonly write: NonNullable<MetadataAuditLogOptions['write']>;
   private readonly now: () => Date;
+  private readonly retainedRecords: number;
 
   constructor(options: MetadataAuditLogOptions = {}) {
     this.write = options.write ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
+    this.retainedRecords = options.retainedRecords ?? 1000;
+    if (!Number.isSafeInteger(this.retainedRecords) || this.retainedRecords < 0 || this.retainedRecords > 10_000) {
+      throw new Error('Audit retention limit is invalid');
+    }
   }
 
   async append(event: unknown): Promise<void> {
@@ -68,7 +74,10 @@ export class MetadataAuditLog {
       ...(candidate.latencyMs !== undefined ? { latencyMs: candidate.latencyMs as number } : {})
     });
     try { await this.write(JSON.stringify(record)); } catch { throw new Error('Metadata audit write failed'); }
-    this.records.push(record);
+    if (this.retainedRecords > 0) {
+      this.records.push(record);
+      if (this.records.length > this.retainedRecords) this.records.splice(0, this.records.length - this.retainedRecords);
+    }
   }
 
   snapshot(): readonly Readonly<Record<string, string | number | undefined>>[] {

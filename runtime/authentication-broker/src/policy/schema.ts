@@ -5,6 +5,8 @@ const Method = z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS
 const UtcTimestamp = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/);
 const OriginText = z.string().min(1).max(2048);
 const PolicyReference = z.string().min(1).max(512);
+const EndpointId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
+const EndpointPath = z.string().min(1).max(2048).regex(/^\/(?!\/)[^\s?#\\\u0000-\u001f\u007f]*$/);
 
 export const BrokerPolicySchema = z.object({
   schemaVersion: z.literal(1),
@@ -32,6 +34,15 @@ export const BrokerPolicySchema = z.object({
     methods: z.array(Method).min(1).max(7),
     policyReference: PolicyReference
   }).strict()).min(1).max(256),
+  endpointAuthorizations: z.array(z.object({
+    accountAlias: Alias,
+    technique: z.string().min(1).max(128),
+    endpointAuthorizationId: EndpointId,
+    origin: OriginText,
+    method: Method,
+    path: EndpointPath,
+    policyReference: PolicyReference
+  }).strict()).max(2048),
   limits: z.object({
     requestsPerSecond: z.number().positive().max(1),
     maxConcurrentRequests: z.number().int().positive().max(1),

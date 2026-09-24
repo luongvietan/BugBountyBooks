@@ -5,6 +5,7 @@ import { resolveAndPinDestination, type AddressResolver, type PinnedDestination 
 import { BROKER_PROXY_HOST, BROKER_PROXY_PORT } from './egress-preflight.js';
 
 export interface ProxyCapabilityContext {
+  readonly capabilityId?: string;
   readonly engagementId: string;
   readonly accountAlias: string;
   readonly policyRevision: string;
@@ -17,6 +18,8 @@ export interface ProxyCapabilityContext {
 
 export interface ProxyAuthorizationLease {
   readonly allowed: boolean;
+  /** Rechecked after DNS resolution and for each outbound CONNECT tunnel chunk. */
+  isCurrent?: () => boolean;
   release?: () => void;
 }
 
@@ -243,6 +246,10 @@ export function createOriginProxy(options: OriginProxyOptions): {
         writeAndClose(clientSocket, 403, 'Forbidden');
         return;
       }
+      if (!leaseIsCurrent(active.lease)) {
+        writeAndClose(clientSocket, 403, 'Forbidden');
+        return;
+      }
       if (clientSocket.destroyed || clientSocket.writableEnded || active.stage === 'closed') return;
       let upstream: Socket;
       try {
@@ -267,13 +274,28 @@ export function createOriginProxy(options: OriginProxyOptions): {
       upstream.once('timeout', () => upstream.destroy());
       upstream.once('connect', () => {
         if (clientSocket.destroyed || active.stage === 'closed') { upstream.destroy(); return; }
+        if (!leaseIsCurrent(active.lease)) {
+          upstream.destroy();
+          writeAndClose(clientSocket, 403, 'Forbidden');
+          return;
+        }
         active.stage = 'relaying';
         if (parsed.kind === 'connect') {
           active.tunneling = true;
           clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-Agent: BugHuntSkills-AuthenticationBroker\r\n\r\n');
           if (initialBytes.length) upstream.write(initialBytes);
-          clientSocket.pipe(upstream);
-          upstream.pipe(clientSocket);
+          clientSocket.on('data', (chunk: Buffer) => {
+            if (!leaseIsCurrent(active.lease)) { clientSocket.destroy(); upstream.destroy(); return; }
+            if (!upstream.write(chunk)) clientSocket.pause();
+          });
+          upstream.on('drain', () => clientSocket.resume());
+          upstream.on('data', (chunk: Buffer) => {
+            if (!leaseIsCurrent(active.lease)) { clientSocket.destroy(); upstream.destroy(); return; }
+            if (!clientSocket.write(chunk)) upstream.pause();
+          });
+          clientSocket.on('drain', () => upstream.resume());
+          clientSocket.once('end', () => upstream.end());
+          upstream.once('end', () => clientSocket.end());
           clientSocket.resume();
           return;
         }
@@ -295,6 +317,12 @@ export function createOriginProxy(options: OriginProxyOptions): {
   }
 
   return { start, close };
+}
+
+function leaseIsCurrent(lease: ProxyAuthorizationLease | undefined): boolean {
+  if (!lease || lease.allowed !== true) return false;
+  if (typeof lease.isCurrent !== 'function') return true;
+  try { return lease.isCurrent() === true; } catch { return false; }
 }
 
 function parseRequestHeader(headerBytes: Buffer, initialBytes: Buffer): ParsedProxyRequest | undefined {

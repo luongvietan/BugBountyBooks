@@ -129,6 +129,16 @@ export class CapabilityManager {
       candidate.technique === input.technique && candidate.policyReference === input.policyReference);
     const policyGrant = policyGrants.length === 1 ? policyGrants[0] : undefined;
     if (!policyGrant || !policy.accountAliases.includes(input.accountAlias)) throw new Error('Capability grant is not present in current policy');
+    const nowMs = this.now().getTime();
+    for (const [activeConnectionId, activeCapability] of this.capabilities) {
+      if (activeCapability.expiresAtMs <= nowMs) {
+        this.capabilities.delete(activeConnectionId);
+        continue;
+      }
+      if (activeConnectionId !== connectionId && activeCapability.engagementId === policy.engagementId && activeCapability.accountAlias === input.accountAlias) {
+        throw new Error('This engagement/account already has an active worker connection');
+      }
+    }
     if (!input.tools.length || input.tools.some((tool) => !roleTools[input.role]?.has(tool))) throw new Error('Capability tools exceed the selected role');
     if (!input.methods.length || input.methods.some((method) => !policyGrant.methods.includes(method))) throw new Error('Capability methods exceed the policy grant');
     if (!input.origins.length || input.origins.some((origin) => !policy.targetOrigins.includes(origin))) throw new Error('Capability origin is not an exact target origin');
@@ -136,7 +146,6 @@ export class CapabilityManager {
       throw new Error('Capability grant contains duplicate values');
     }
 
-    const nowMs = this.now().getTime();
     const expiresAtMs = Math.min(Date.parse(policy.limits.expiresAtUtc), Date.parse(policy.policySnapshot.freshUntilUtc));
     const capability: Capability = {
       connectionId,
@@ -152,7 +161,7 @@ export class CapabilityManager {
       expiresAtMs,
       remainingRequests: policy.limits.maxRequestsPerCapability,
       activeRequests: 0,
-      rateTokens: policy.limits.requestsPerSecond,
+      rateTokens: 1,
       lastRefillMs: nowMs
     };
     this.capabilities.set(connectionId, capability);
@@ -233,6 +242,17 @@ export class CapabilityManager {
 
   revoke(connectionId: string): boolean {
     return this.capabilities.delete(connectionId as ConnectionId);
+  }
+
+  revokeAccount(engagementId: string, accountAlias: string): number {
+    let revoked = 0;
+    for (const [connectionId, capability] of this.capabilities) {
+      if (capability.engagementId === engagementId && capability.accountAlias === accountAlias) {
+        this.capabilities.delete(connectionId);
+        revoked += 1;
+      }
+    }
+    return revoked;
   }
 
   revokeForSession(sessionId?: string): boolean {
@@ -348,7 +368,7 @@ export class CapabilityManager {
 
 function refill(capability: Capability, nowMs: number, requestsPerSecond: number): void {
   const elapsedSeconds = Math.max(0, nowMs - capability.lastRefillMs) / 1000;
-  capability.rateTokens = Math.min(requestsPerSecond, capability.rateTokens + elapsedSeconds * requestsPerSecond);
+  capability.rateTokens = Math.min(1, capability.rateTokens + elapsedSeconds * requestsPerSecond);
   capability.lastRefillMs = nowMs;
 }
 

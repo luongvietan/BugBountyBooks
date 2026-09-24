@@ -4,9 +4,11 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { BrokerPolicy } from '../policy/schema.js';
 import type { AuthorizedApiScope } from '../browser/api-request.js';
+import type { HttpMethod } from '../capability/grants.js';
 import { normalizeOrigin } from '../policy/origin.js';
 import { acquireProfileLock, type ProfileLockHandle } from './profile-lock.js';
 import { selectProfileMode, type ProfileProtectionDecision } from './profile-protection.js';
+import { NetworkRequestBudget } from './network-request-budget.js';
 
 export type SessionState = 'not_configured' | 'login_required' | 'user_action_required' | 'active' | 'expired' | 'revoked' | 'error';
 
@@ -32,11 +34,12 @@ export interface SessionContextHandle {
   openLogin(origin: string): Promise<void>;
   activateTarget?(): void;
   pauseTarget?(): void;
-  setTargetScope?(origins: readonly string[]): void;
-  navigate?(url: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }>;
-  observePage?(allowedOrigins?: readonly string[]): Promise<unknown>;
-  clickObservedLink?(id: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }>;
-  fillResearcherControlledField?(id: string, value: string, allowedOrigins?: readonly string[]): Promise<{ filled: boolean }>;
+  setTargetScope?(origins: readonly string[], methods?: readonly string[], technique?: string): void;
+  setApiScope?(origins: readonly string[], methods: readonly string[], technique: string): void;
+  navigate?(url: string, allowedOrigins?: readonly string[], allowedMethods?: readonly HttpMethod[]): Promise<{ navigated: boolean }>;
+  observePage?(allowedOrigins?: readonly string[], allowedMethods?: readonly HttpMethod[]): Promise<unknown>;
+  clickObservedLink?(id: string, allowedOrigins?: readonly string[], allowedMethods?: readonly HttpMethod[]): Promise<{ navigated: boolean }>;
+  fillResearcherControlledField?(id: string, value: string, allowedOrigins?: readonly string[], allowedMethods?: readonly HttpMethod[]): Promise<{ filled: boolean }>;
   authorizedRequest?: (request: unknown, scope?: AuthorizedApiScope) => Promise<SessionApiRequestResult>;
   close(): Promise<void>;
 }
@@ -51,6 +54,8 @@ export interface SessionContextOptions {
   readonly loginOrigins: readonly string[];
   readonly targetOrigins: readonly string[];
   readonly proxyCredentials: { readonly username: string; readonly password: string };
+  readonly reserveTargetRequest: () => Promise<(() => void) | undefined>;
+  readonly onTargetResponseStatus: (status: number) => void;
 }
 
 export interface SessionManagerOptions {
@@ -62,7 +67,7 @@ export interface SessionManagerOptions {
   acquireLock?: (options: { directory: string; profileKey: string }) => Promise<ProfileLockHandle>;
   createProxyCredentials: (input: { engagementId: string; accountAlias: string }) => { username: string; password: string };
   createContext: (options: SessionContextOptions) => Promise<SessionContextHandle>;
-  onRateLimit?: (input: { engagementId: string; accountAlias: string }) => void;
+  onAuthorizationStop?: (input: { engagementId: string; accountAlias: string; status: 403 | 429 }) => void;
 }
 
 interface ManagedSession {
@@ -75,16 +80,19 @@ interface ManagedSession {
   readonly createdAtUtc: string;
   readonly lock: ProfileLockHandle;
   readonly context: SessionContextHandle;
+  readonly networkBudget: NetworkRequestBudget;
   state: SessionState;
   lastCheckedAtUtc: string;
   revoked: boolean;
   busy: boolean;
   closed: boolean;
+  actionReason?: 'attended-login' | 'authorization-review';
 }
 
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly pending = new Map<string, Promise<ManagedSession>>();
+  private readonly networkBudgets = new Map<string, { revision: string; budget: NetworkRequestBudget }>();
   private readonly profileRoot: string;
   private readonly getPolicy: SessionManagerOptions['getPolicy'];
   private readonly now: () => Date;
@@ -93,7 +101,7 @@ export class SessionManager {
   private readonly acquireLock: NonNullable<SessionManagerOptions['acquireLock']>;
   private readonly createProxyCredentials: SessionManagerOptions['createProxyCredentials'];
   private readonly createContext: SessionManagerOptions['createContext'];
-  private readonly onRateLimit: NonNullable<SessionManagerOptions['onRateLimit']>;
+  private readonly onAuthorizationStop: NonNullable<SessionManagerOptions['onAuthorizationStop']>;
 
   constructor(options: SessionManagerOptions) {
     if (typeof options.profileRoot !== 'string' || !path.isAbsolute(options.profileRoot)) throw new Error('Session profile root must be absolute');
@@ -105,7 +113,7 @@ export class SessionManager {
     this.acquireLock = options.acquireLock ?? acquireProfileLock;
     this.createProxyCredentials = options.createProxyCredentials;
     this.createContext = options.createContext;
-    this.onRateLimit = options.onRateLimit ?? (() => undefined);
+    this.onAuthorizationStop = options.onAuthorizationStop ?? (() => undefined);
   }
 
   async start(engagementId: string, accountAlias: string): Promise<SessionSnapshot> {
@@ -139,10 +147,11 @@ export class SessionManager {
     if (normalized !== origin || !policy.loginOrigins.some((entry) => entry.origin === normalized)) {
       throw new Error('Login origin is not permitted by current policy');
     }
-    if (current.state !== 'login_required' && current.state !== 'user_action_required') throw new Error('Session is not awaiting attended sign-in');
+    if ((current.state !== 'login_required' && current.state !== 'user_action_required') || current.actionReason === 'authorization-review') throw new Error('Session is not awaiting attended sign-in');
     try {
       await current.context.openLogin(normalized);
       current.state = 'user_action_required';
+      current.actionReason = 'attended-login';
       current.lastCheckedAtUtc = this.now().toISOString();
       return this.snapshot(current);
     } catch {
@@ -155,9 +164,21 @@ export class SessionManager {
   confirmAttendedLogin(engagementId: string, accountAlias: string): SessionSnapshot {
     const current = this.requireSession(engagementId, accountAlias);
     this.requireCurrentPolicy(engagementId, accountAlias, current.policyRevision);
-    if (current.state !== 'user_action_required') throw new Error('Session is not awaiting researcher confirmation');
+    if (current.state !== 'user_action_required' || current.actionReason === 'authorization-review') throw new Error('Session is not awaiting researcher confirmation');
     try { current.context.activateTarget?.(); } catch { throw new Error('Managed target page could not be enabled'); }
     current.state = 'active';
+    delete current.actionReason;
+    current.lastCheckedAtUtc = this.now().toISOString();
+    return this.snapshot(current);
+  }
+
+  confirmResearcherResume(engagementId: string, accountAlias: string): SessionSnapshot {
+    const current = this.requireSession(engagementId, accountAlias);
+    this.requireCurrentPolicy(engagementId, accountAlias, current.policyRevision);
+    if (current.state !== 'user_action_required' || current.actionReason !== 'authorization-review' || current.revoked) throw new Error('Session is not awaiting authorization review');
+    try { current.context.activateTarget?.(); } catch { throw new Error('Managed target page could not be enabled'); }
+    current.state = 'active';
+    delete current.actionReason;
     current.lastCheckedAtUtc = this.now().toISOString();
     return this.snapshot(current);
   }
@@ -165,8 +186,10 @@ export class SessionManager {
   requireResearcherAction(engagementId: string, accountAlias: string): SessionSnapshot {
     const current = this.requireSession(engagementId, accountAlias);
     if (current.state === 'revoked' || current.state === 'error') throw new Error('Session cannot be resumed');
+    if (current.actionReason === 'authorization-review') throw new Error('Authorization review must be confirmed before sign-in');
     try { current.context.pauseTarget?.(); } catch { current.state = 'error'; throw new Error('Managed session could not be paused safely'); }
     current.state = 'user_action_required';
+    current.actionReason = 'attended-login';
     current.lastCheckedAtUtc = this.now().toISOString();
     return this.snapshot(current);
   }
@@ -176,31 +199,31 @@ export class SessionManager {
     return current ? this.snapshot(current) : undefined;
   }
 
-  async navigate(engagementId: string, accountAlias: string, url: string, allowedOrigins: readonly string[]): Promise<{ navigated: boolean }> {
-    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+  async navigate(engagementId: string, accountAlias: string, url: string, allowedOrigins: readonly string[], allowedMethods: readonly HttpMethod[] = ['GET']): Promise<{ navigated: boolean }> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, allowedMethods, async (context) => {
       if (!context.navigate) throw new Error('Managed page navigation is unavailable');
-      return context.navigate(url, allowedOrigins);
+      return context.navigate(url, allowedOrigins, allowedMethods);
     });
   }
 
-  async observePage(engagementId: string, accountAlias: string, allowedOrigins: readonly string[]): Promise<unknown> {
-    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+  async observePage(engagementId: string, accountAlias: string, allowedOrigins: readonly string[], allowedMethods: readonly HttpMethod[] = ['GET']): Promise<unknown> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, allowedMethods, async (context) => {
       if (!context.observePage) throw new Error('Managed page observation is unavailable');
-      return context.observePage(allowedOrigins);
+      return context.observePage(allowedOrigins, allowedMethods);
     });
   }
 
-  async clickObservedLink(engagementId: string, accountAlias: string, id: string, allowedOrigins: readonly string[]): Promise<{ navigated: boolean }> {
-    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+  async clickObservedLink(engagementId: string, accountAlias: string, id: string, allowedOrigins: readonly string[], allowedMethods: readonly HttpMethod[] = ['GET']): Promise<{ navigated: boolean }> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, allowedMethods, async (context) => {
       if (!context.clickObservedLink) throw new Error('Managed link action is unavailable');
-      return context.clickObservedLink(id, allowedOrigins);
+      return context.clickObservedLink(id, allowedOrigins, allowedMethods);
     });
   }
 
-  async fillResearcherControlledField(engagementId: string, accountAlias: string, id: string, value: string, allowedOrigins: readonly string[]): Promise<{ filled: boolean }> {
-    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+  async fillResearcherControlledField(engagementId: string, accountAlias: string, id: string, value: string, allowedOrigins: readonly string[], allowedMethods: readonly HttpMethod[] = ['GET']): Promise<{ filled: boolean }> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, allowedMethods, async (context) => {
       if (!context.fillResearcherControlledField) throw new Error('Managed field action is unavailable');
-      return context.fillResearcherControlledField(id, value, allowedOrigins);
+      return context.fillResearcherControlledField(id, value, allowedOrigins, allowedMethods);
     });
   }
 
@@ -216,7 +239,18 @@ export class SessionManager {
     if (!current.context.authorizedRequest) throw new Error('API request capability is disabled for this session');
     current.busy = true;
     try {
-      const result = await current.context.authorizedRequest(request, scope);
+      if (current.context.setApiScope) {
+        if (!scope) throw new Error('API capability scope is unavailable');
+        current.context.setApiScope(scope.allowedOrigins, scope.allowedMethods, scope.technique);
+      } else if (current.context.setTargetScope) {
+        throw new Error('API capability scope is unavailable');
+      }
+      const requestScope = scope ? Object.freeze({
+        ...scope,
+        reserveRequest: () => current.networkBudget.acquire(),
+        onResponseStatus: (status: number) => this.handleTargetResponseStatus(engagementId, accountAlias, status)
+      }) : undefined;
+      const result = await current.context.authorizedRequest(request, requestScope);
       if (!result || !Number.isInteger(result.status) || result.status < 100 || result.status > 599 || typeof result.body !== 'string' ||
           (result.headers !== undefined && (!result.headers || typeof result.headers !== 'object' || Array.isArray(result.headers))) ||
           (result.bodySuppressed !== undefined && typeof result.bodySuppressed !== 'boolean')) {
@@ -224,13 +258,7 @@ export class SessionManager {
         throw new Error('Broker returned an invalid API result');
       }
       current.lastCheckedAtUtc = this.now().toISOString();
-      if (result.status === 401) {
-        try { current.context.pauseTarget?.(); } catch { /* worker access remains expired */ }
-        current.state = 'expired';
-      }
-      if (result.status === 429) {
-        try { this.onRateLimit({ engagementId, accountAlias }); } catch { /* queue-stop notification cannot enable replay */ }
-      }
+      if (result.status === 401 || result.status === 403 || result.status === 429) this.handleTargetResponseStatus(engagementId, accountAlias, result.status);
       return Object.freeze({
         status: result.status,
         body: result.body,
@@ -239,11 +267,27 @@ export class SessionManager {
       });
     } catch {
       try { current.context.pauseTarget?.(); } catch { current.state = 'error'; }
-      if (current.state !== 'error' && current.state !== 'expired') current.state = 'user_action_required';
+      const failedState = current.state as SessionState;
+      if (failedState !== 'error' && failedState !== 'expired') current.state = 'user_action_required';
       current.lastCheckedAtUtc = this.now().toISOString();
       throw new Error('Request outcome is unknown; no automatic replay occurred');
     } finally {
       current.busy = false;
+    }
+  }
+
+  handleTargetResponseStatus(engagementId: string, accountAlias: string, status: number): void {
+    if (status !== 401 && status !== 403 && status !== 429) return;
+    const current = this.sessions.get(sessionKey(engagementId, accountAlias));
+    if (!current || current.closed || current.state !== 'active' || current.revoked) return;
+    let paused = true;
+    try { current.context.pauseTarget?.(); } catch { paused = false; }
+    current.state = paused ? (status === 401 ? 'expired' : 'user_action_required') : 'error';
+    if (paused) current.actionReason = status === 401 ? 'attended-login' : 'authorization-review';
+    else delete current.actionReason;
+    current.lastCheckedAtUtc = this.now().toISOString();
+    if (status === 403 || status === 429) {
+      try { this.onAuthorizationStop({ engagementId, accountAlias, status }); } catch { /* account capability revocation remains fail closed at the caller */ }
     }
   }
 
@@ -283,8 +327,12 @@ export class SessionManager {
       }
     }));
     if (results.some((result) => result.status === 'rejected')) {
+      for (const entry of this.networkBudgets.values()) entry.budget.close();
+      this.networkBudgets.clear();
       throw new Error('One or more managed sessions could not be closed safely');
     }
+    for (const entry of this.networkBudgets.values()) entry.budget.close();
+    this.networkBudgets.clear();
   }
 
   private async createSession(engagementId: string, accountAlias: string, key: string): Promise<ManagedSession> {
@@ -304,6 +352,7 @@ export class SessionManager {
       throw new Error('Account profile is already in use or cannot be safely locked');
     }
     try {
+      const networkBudget = this.networkBudgetFor(key, policy);
       const proxyCredentials = this.createProxyCredentials({ engagementId, accountAlias });
       if (!proxyCredentials || typeof proxyCredentials.username !== 'string' || !proxyCredentials.username ||
           typeof proxyCredentials.password !== 'string' || proxyCredentials.password.length < 32) {
@@ -318,7 +367,9 @@ export class SessionManager {
         ...(mode === 'persistent' ? { profilePath } : {}),
         loginOrigins: Object.freeze(policy.loginOrigins.map(({ origin }) => normalizeOrigin(origin))),
         targetOrigins: Object.freeze(policy.targetOrigins.map(normalizeOrigin)),
-        proxyCredentials: Object.freeze({ username: proxyCredentials.username, password: proxyCredentials.password })
+        proxyCredentials: Object.freeze({ username: proxyCredentials.username, password: proxyCredentials.password }),
+        reserveTargetRequest: () => networkBudget.acquire(),
+        onTargetResponseStatus: (status) => this.handleTargetResponseStatus(engagementId, accountAlias, status)
       };
       const context = await this.createContext(contextOptions);
       const createdAtUtc = this.now().toISOString();
@@ -333,6 +384,7 @@ export class SessionManager {
         lastCheckedAtUtc: createdAtUtc,
         lock,
         context,
+        networkBudget,
         state: 'login_required',
         revoked: false,
         busy: false,
@@ -366,6 +418,7 @@ export class SessionManager {
     engagementId: string,
     accountAlias: string,
     allowedOrigins: readonly string[],
+    allowedMethods: readonly HttpMethod[],
     action: (context: SessionContextHandle) => Promise<T>
   ): Promise<T> {
     const current = this.requireSession(engagementId, accountAlias);
@@ -379,9 +432,10 @@ export class SessionManager {
     let policy: BrokerPolicy | undefined;
     try { policy = this.getPolicy(engagementId); } catch { policy = undefined; }
     const origins = canonicalCapabilityOrigins(allowedOrigins, policy?.targetOrigins ?? []);
+    const methods = canonicalPageMethods(allowedMethods);
     current.busy = true;
     try {
-      current.context.setTargetScope?.(origins);
+      current.context.setTargetScope?.(origins, methods);
       const result = await action(current.context);
       current.lastCheckedAtUtc = this.now().toISOString();
       return result;
@@ -415,6 +469,21 @@ export class SessionManager {
       revoked: session.revoked
     });
   }
+
+  private networkBudgetFor(key: string, policy: BrokerPolicy): NetworkRequestBudget {
+    const revision = policy.policySnapshot.revision;
+    const existing = this.networkBudgets.get(key);
+    if (existing?.revision === revision) return existing.budget;
+    existing?.budget.close();
+    const budget = new NetworkRequestBudget({
+      requestsPerSecond: policy.limits.requestsPerSecond,
+      maxConcurrentRequests: policy.limits.maxConcurrentRequests,
+      maxRequests: policy.limits.maxRequestsPerCapability,
+      now: () => this.now().getTime()
+    });
+    this.networkBudgets.set(key, { revision, budget });
+    return budget;
+  }
 }
 
 function sessionKey(engagementId: string, accountAlias: string): string {
@@ -439,6 +508,14 @@ function canonicalCapabilityOrigins(origins: readonly string[], targetOrigins: r
   });
   if (new Set(result).size !== result.length) throw new Error('Page capability contains duplicate origins');
   return Object.freeze(result);
+}
+
+function canonicalPageMethods(methods: readonly HttpMethod[]): readonly HttpMethod[] {
+  if (!Array.isArray(methods) || !methods.length || new Set(methods).size !== methods.length ||
+      methods.some((method) => method !== 'GET' && method !== 'HEAD') || !methods.includes('GET')) {
+    throw new Error('Page capability does not authorize GET navigation');
+  }
+  return Object.freeze([...methods]);
 }
 
 async function preparePrivateProfileDirectory(directory: string): Promise<void> {

@@ -32,6 +32,7 @@ export async function loadPolicy(filePath: string, now: Date): Promise<DeepReado
       refreshOrigins: policy.refreshOrigins.map((refresh) => ({ ...refresh, origin: normalizeOrigin(refresh.origin) })),
       targetOrigins: policy.targetOrigins.map(normalizeOrigin),
       grants: policy.grants.map((grant) => ({ ...grant, methods: [...grant.methods] })),
+      endpointAuthorizations: policy.endpointAuthorizations.map((endpoint) => ({ ...endpoint, origin: normalizeOrigin(endpoint.origin) })),
       accountAliases: [...policy.accountAliases],
       stopConditions: [...policy.stopConditions],
       limits: { ...policy.limits }
@@ -74,6 +75,17 @@ function validateRelations(policy: BrokerPolicy, now: Date): void {
     }
     assertUnique(grant.methods);
   }
+  assertUnique(policy.endpointAuthorizations.map(({ endpointAuthorizationId }) => endpointAuthorizationId));
+  for (const endpoint of policy.endpointAuthorizations) {
+    if (!aliases.has(endpoint.accountAlias) || !targets.has(endpoint.origin) || !isCanonicalPath(endpoint.path)) {
+      throw new Error('Endpoint authorization exceeds the current target policy');
+    }
+    const matchingGrants = policy.grants.filter((grant) => grant.accountAlias === endpoint.accountAlias &&
+      grant.technique === endpoint.technique && grant.policyReference === endpoint.policyReference);
+    if (matchingGrants.length !== 1 || !matchingGrants[0]!.methods.includes(endpoint.method)) {
+      throw new Error('Endpoint authorization does not match one explicit policy grant');
+    }
+  }
   for (const refresh of policy.refreshOrigins) {
     if (!refresh.policyReference.trim()) throw new Error('Refresh requires an explicit policy reference');
     assertUnique(refresh.methods);
@@ -92,6 +104,14 @@ function validHttpUrl(input: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isCanonicalPath(input: string): boolean {
+  try {
+    if (!input.startsWith('/') || input.startsWith('//') || /[?#\\\s\u0000-\u001f\u007f]/.test(input)) return false;
+    const parsed = new URL(input, 'https://endpoint.invalid');
+    return parsed.origin === 'https://endpoint.invalid' && parsed.pathname === input && parsed.search === '' && parsed.hash === '';
+  } catch { return false; }
 }
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
