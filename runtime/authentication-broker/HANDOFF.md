@@ -43,8 +43,9 @@ Final local verification used Node 24:
 - `npm test` — 195 passed, 0 failed.
 - `git diff --check` — passed (Git printed only line-ending normalization notices).
 
-The feature branch to publish is `codex/authentication-broker` on the personal
-fork remote (`myfork`). No pull request has been created.
+The feature branch `codex/authentication-broker` has been pushed to the personal
+fork remote (`myfork`), and the remote HEAD was verified to match local HEAD.
+No pull request has been created.
 
 ```powershell
 npm ci
