@@ -21,7 +21,7 @@ export interface ResearcherCapabilityGrant {
 interface ControlSurfaceOptions {
   registry: Pick<ConnectionRegistry, 'list'>;
   capabilities: Pick<CapabilityManager, 'grant' | 'revoke' | 'accountAliasFor'>;
-  closeSession: (connectionId: string) => boolean;
+  closeSession: (connectionId: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -58,7 +58,7 @@ export class ResearcherControlSurface {
     return this.capabilities.revoke(connectionId);
   }
 
-  closeSession(connectionId: string, confirmed: boolean): boolean {
+  async closeSession(connectionId: string, confirmed: boolean): Promise<boolean> {
     if (confirmed !== true) return false;
     return this.closeSessionAction(connectionId);
   }

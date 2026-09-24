@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { BrokerPolicy } from '../policy/schema.js';
+import type { AuthorizedApiScope } from '../browser/api-request.js';
 import { normalizeOrigin } from '../policy/origin.js';
 import { acquireProfileLock, type ProfileLockHandle } from './profile-lock.js';
 import { selectProfileMode, type ProfileProtectionDecision } from './profile-protection.js';
@@ -31,11 +32,12 @@ export interface SessionContextHandle {
   openLogin(origin: string): Promise<void>;
   activateTarget?(): void;
   pauseTarget?(): void;
-  navigate?(url: string): Promise<{ navigated: boolean }>;
-  observePage?(): Promise<unknown>;
-  clickObservedLink?(id: string): Promise<{ navigated: boolean }>;
-  fillResearcherControlledField?(id: string, value: string): Promise<{ filled: boolean }>;
-  authorizedRequest?: (request: unknown) => Promise<SessionApiRequestResult>;
+  setTargetScope?(origins: readonly string[]): void;
+  navigate?(url: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }>;
+  observePage?(allowedOrigins?: readonly string[]): Promise<unknown>;
+  clickObservedLink?(id: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }>;
+  fillResearcherControlledField?(id: string, value: string, allowedOrigins?: readonly string[]): Promise<{ filled: boolean }>;
+  authorizedRequest?: (request: unknown, scope?: AuthorizedApiScope) => Promise<SessionApiRequestResult>;
   close(): Promise<void>;
 }
 
@@ -174,7 +176,35 @@ export class SessionManager {
     return current ? this.snapshot(current) : undefined;
   }
 
-  async authorizedRequest(engagementId: string, accountAlias: string, request: unknown): Promise<SessionApiRequestResult> {
+  async navigate(engagementId: string, accountAlias: string, url: string, allowedOrigins: readonly string[]): Promise<{ navigated: boolean }> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+      if (!context.navigate) throw new Error('Managed page navigation is unavailable');
+      return context.navigate(url, allowedOrigins);
+    });
+  }
+
+  async observePage(engagementId: string, accountAlias: string, allowedOrigins: readonly string[]): Promise<unknown> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+      if (!context.observePage) throw new Error('Managed page observation is unavailable');
+      return context.observePage(allowedOrigins);
+    });
+  }
+
+  async clickObservedLink(engagementId: string, accountAlias: string, id: string, allowedOrigins: readonly string[]): Promise<{ navigated: boolean }> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+      if (!context.clickObservedLink) throw new Error('Managed link action is unavailable');
+      return context.clickObservedLink(id, allowedOrigins);
+    });
+  }
+
+  async fillResearcherControlledField(engagementId: string, accountAlias: string, id: string, value: string, allowedOrigins: readonly string[]): Promise<{ filled: boolean }> {
+    return this.performPageAction(engagementId, accountAlias, allowedOrigins, async (context) => {
+      if (!context.fillResearcherControlledField) throw new Error('Managed field action is unavailable');
+      return context.fillResearcherControlledField(id, value, allowedOrigins);
+    });
+  }
+
+  async authorizedRequest(engagementId: string, accountAlias: string, request: unknown, scope?: AuthorizedApiScope): Promise<SessionApiRequestResult> {
     const current = this.requireSession(engagementId, accountAlias);
     try { this.requireCurrentPolicy(engagementId, accountAlias, current.policyRevision); } catch {
       current.state = 'revoked';
@@ -186,7 +216,7 @@ export class SessionManager {
     if (!current.context.authorizedRequest) throw new Error('API request capability is disabled for this session');
     current.busy = true;
     try {
-      const result = await current.context.authorizedRequest(request);
+      const result = await current.context.authorizedRequest(request, scope);
       if (!result || !Number.isInteger(result.status) || result.status < 100 || result.status > 599 || typeof result.body !== 'string' ||
           (result.headers !== undefined && (!result.headers || typeof result.headers !== 'object' || Array.isArray(result.headers))) ||
           (result.bodySuppressed !== undefined && typeof result.bodySuppressed !== 'boolean')) {
@@ -227,20 +257,34 @@ export class SessionManager {
       try {
         await current.context.close();
         current.closed = true;
+        await current.lock.release();
+        this.sessions.delete(sessionKey(engagementId, accountAlias));
       } catch {
         current.state = 'error';
         throw new Error('Managed session could not be closed safely');
-      } finally { await current.lock.release(); }
+      }
     }
     return this.snapshot(current);
   }
 
   async closeAll(): Promise<void> {
-    const current = [...this.sessions.values()];
-    this.sessions.clear();
-    await Promise.all(current.map(async (session) => {
-      try { await session.context.close(); } finally { await session.lock.release(); }
+    const current = [...this.sessions.entries()];
+    const results = await Promise.allSettled(current.map(async ([key, session]) => {
+      try {
+        await session.context.close();
+        session.closed = true;
+        await session.lock.release();
+        this.sessions.delete(key);
+      } catch {
+        session.state = 'error';
+        session.revoked = true;
+        session.lastCheckedAtUtc = this.now().toISOString();
+        throw new Error('Managed session could not be closed safely');
+      }
     }));
+    if (results.some((result) => result.status === 'rejected')) {
+      throw new Error('One or more managed sessions could not be closed safely');
+    }
   }
 
   private async createSession(engagementId: string, accountAlias: string, key: string): Promise<ManagedSession> {
@@ -318,6 +362,38 @@ export class SessionManager {
     return session;
   }
 
+  private async performPageAction<T>(
+    engagementId: string,
+    accountAlias: string,
+    allowedOrigins: readonly string[],
+    action: (context: SessionContextHandle) => Promise<T>
+  ): Promise<T> {
+    const current = this.requireSession(engagementId, accountAlias);
+    try { this.requireCurrentPolicy(engagementId, accountAlias, current.policyRevision); } catch {
+      current.state = 'revoked';
+      current.revoked = true;
+      throw new Error('Session policy is stale or unavailable');
+    }
+    if (current.state !== 'active' || current.revoked) throw new Error('Session is not active');
+    if (current.busy) throw new Error('Session request is already in progress');
+    let policy: BrokerPolicy | undefined;
+    try { policy = this.getPolicy(engagementId); } catch { policy = undefined; }
+    const origins = canonicalCapabilityOrigins(allowedOrigins, policy?.targetOrigins ?? []);
+    current.busy = true;
+    try {
+      current.context.setTargetScope?.(origins);
+      const result = await action(current.context);
+      current.lastCheckedAtUtc = this.now().toISOString();
+      return result;
+    } catch {
+      try { current.context.pauseTarget?.(); } catch { current.state = 'error'; }
+      const state = current.state as SessionState;
+      if (state !== 'error' && state !== 'revoked') current.state = 'user_action_required';
+      current.lastCheckedAtUtc = this.now().toISOString();
+      throw new Error('Managed page action was blocked or failed');
+    } finally { current.busy = false; }
+  }
+
   private snapshot(session: ManagedSession): SessionSnapshot {
     let currentPolicy: BrokerPolicy | undefined;
     try { currentPolicy = this.getPolicy(session.engagementId); } catch { currentPolicy = undefined; }
@@ -351,6 +427,18 @@ function sessionKey(engagementId: string, accountAlias: string): string {
 
 function profileDirectoryName(engagementId: string, accountAlias: string): string {
   return createHash('sha256').update(sessionKey(engagementId, accountAlias)).digest('hex');
+}
+
+function canonicalCapabilityOrigins(origins: readonly string[], targetOrigins: readonly string[]): readonly string[] {
+  if (!Array.isArray(origins) || !origins.length) throw new Error('Page capability has no approved origins');
+  const result = origins.map((origin) => {
+    let normalized: string;
+    try { normalized = normalizeOrigin(origin); } catch { throw new Error('Page capability origin is invalid'); }
+    if (normalized !== origin || !targetOrigins.includes(origin)) throw new Error('Page capability exceeds current target policy');
+    return origin;
+  });
+  if (new Set(result).size !== result.length) throw new Error('Page capability contains duplicate origins');
+  return Object.freeze(result);
 }
 
 async function preparePrivateProfileDirectory(directory: string): Promise<void> {

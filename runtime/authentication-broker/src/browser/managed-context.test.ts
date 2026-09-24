@@ -43,10 +43,11 @@ type ManagedContextModule = {
     openLogin: (origin: string) => Promise<void>;
     activateTarget: () => void;
     pauseTarget: () => void;
-    navigate: (url: string) => Promise<{ navigated: boolean }>;
-    observePage: () => Promise<unknown>;
-    clickObservedLink: (id: string) => Promise<{ navigated: boolean }>;
-    fillResearcherControlledField: (id: string, value: string) => Promise<{ filled: boolean }>;
+    setTargetScope: (origins: readonly string[]) => void;
+    navigate: (url: string, allowedOrigins?: readonly string[]) => Promise<{ navigated: boolean }>;
+    observePage: (allowedOrigins?: readonly string[]) => Promise<unknown>;
+    clickObservedLink: (id: string, allowedOrigins?: readonly string[]) => Promise<{ navigated: boolean }>;
+    fillResearcherControlledField: (id: string, value: string, allowedOrigins?: readonly string[]) => Promise<{ filled: boolean }>;
     authorizedRequest?: (input: unknown) => Promise<{ status: number; body: string }>;
     close: () => Promise<void>;
   }>;
@@ -152,10 +153,12 @@ test('starts a fresh in-memory context with strict defaults and blocks traffic u
   assert.deepEqual(decisions.slice(-4).map(({ result }) => result), ['allowed', 'blocked', 'allowed', 'blocked']);
 
   managed.activateTarget();
+  await route('https://app.example:443/profile', 'GET');
+  managed.setTargetScope(['https://app.example:443']);
   await route('https://login.identity.example:443/sign-in', 'GET');
   await route('https://app.example:443/profile', 'GET');
   await route('https://app.example:443/profile', 'POST');
-  assert.deepEqual(decisions.slice(-3).map(({ result }) => result), ['blocked', 'allowed', 'blocked']);
+  assert.deepEqual(decisions.slice(-4).map(({ result }) => result), ['blocked', 'blocked', 'allowed', 'blocked']);
 
   let socketClosed = false;
   await fake.state.websocketHandler!({ close: async (options) => { socketClosed = options?.code === 1008; } });

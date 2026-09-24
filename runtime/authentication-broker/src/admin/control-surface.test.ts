@@ -5,12 +5,12 @@ type AdminModule = {
   ResearcherControlSurface: new(options: {
     registry: unknown;
     capabilities: unknown;
-    closeSession: (connectionId: string) => boolean;
+    closeSession: (connectionId: string) => boolean | Promise<boolean>;
   }) => {
     listConnections(): readonly { connectionId: string; openedAtUtc: string; accountAlias?: string }[];
     grant(input: { connectionId: string; accountAlias: string; role: 'mapper' | 'tester' | 'validator'; tools: string[]; technique: string; policyReference: string; methods: string[]; origins: string[] }): unknown;
     revoke(connectionId: string): boolean;
-    closeSession(connectionId: string, confirmed: boolean): boolean;
+    closeSession(connectionId: string, confirmed: boolean): Promise<boolean>;
   };
 };
 
@@ -54,8 +54,8 @@ test('requires deliberate confirmation before closing a session', async () => {
   const capabilities = { grant: () => undefined, revoke: () => true, accountAliasFor: () => undefined };
   const surface = new ResearcherControlSurface({ registry, capabilities, closeSession: () => { closeCalls += 1; return true; } });
 
-  assert.equal(surface.closeSession('opaque-id', false), false);
+  assert.equal(await surface.closeSession('opaque-id', false), false);
   assert.equal(closeCalls, 0);
-  assert.equal(surface.closeSession('opaque-id', true), true);
+  assert.equal(await surface.closeSession('opaque-id', true), true);
   assert.equal(closeCalls, 1);
 });

@@ -172,9 +172,15 @@ test('binds every request to the server-mapped account and explicit policy grant
   const forged = manager.acquire(sessionA, request({ accountAlias: 'researcher-b', connectionId: connectionB }));
   assert.equal(forged.allowed, true);
   assert.deepEqual(forged.context, {
+    connectionId: connectionA,
     engagementId: 'synthetic-demo-2026-09-24',
     accountAlias: 'researcher-a',
-    policyRevision: 'rules-r1'
+    policyRevision: 'rules-r1',
+    role: 'tester',
+    technique: 'read-only mapping',
+    policyReference: 'Synthetic rules > mapping',
+    methods: ['GET'],
+    origins: ['https://app.example:443']
   });
   forged.release?.();
 

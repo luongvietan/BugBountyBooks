@@ -47,6 +47,7 @@ type SessionManagerApi = {
     authorizedRequest: (engagementId: string, accountAlias: string, request: unknown) => Promise<{ status: number; body: string }>;
     requireResearcherAction: (engagementId: string, accountAlias: string) => SessionSnapshot;
     revoke: (engagementId: string, accountAlias: string, closeProfile?: boolean) => Promise<SessionSnapshot>;
+    closeAll: () => Promise<void>;
   };
 };
 
@@ -74,13 +75,14 @@ function policy(revision = 'revision-1', engagementId = 'engagement-a'): BrokerP
 
 function makeManager(
   SessionManager: SessionManagerApi['SessionManager'],
-  options: { mode?: 'persistent' | 'memory'; statuses?: Array<number | Error>; revision?: string; openCalls?: string[]; created?: Array<Record<string, unknown>>; rateLimits?: number[] } = {}
+  options: { mode?: 'persistent' | 'memory'; statuses?: Array<number | Error>; revision?: string; openCalls?: string[]; created?: Array<Record<string, unknown>>; rateLimits?: number[]; closeFails?: boolean; lockReleases?: number[] } = {}
 ) {
   const clock = new Date('2026-09-24T02:00:00.000Z');
   const created: Array<Record<string, unknown>> = options.created ?? [];
   const openCalls = options.openCalls ?? [];
   const statuses = options.statuses ?? [];
   const rateLimits = options.rateLimits ?? [];
+  const lockReleases = options.lockReleases ?? [];
   let statusIndex = 0;
   const manager = new SessionManager({
     profileRoot: 'C:\\Synthetic\\BugHuntSkills\\AuthenticationBroker\\profiles',
@@ -91,13 +93,13 @@ function makeManager(
       mode: options.mode ?? 'memory',
       reason: options.mode === 'persistent' ? 'protection-verified' : 'protection-unverified'
     }),
-    acquireLock: async () => ({ release: async () => undefined }),
+    acquireLock: async () => ({ release: async () => { lockReleases.push(1); } }),
     createProxyCredentials: ({ engagementId, accountAlias }) => ({ username: `session-${engagementId}-${accountAlias}`, password: 'synthetic-proxy-capability-secret' }),
     createContext: async (input) => {
       created.push(input as unknown as Record<string, unknown>);
       return {
         openLogin: async (origin) => { openCalls.push(origin); },
-        close: async () => undefined,
+        close: async () => { if (options.closeFails) throw new Error('synthetic close failure'); },
         authorizedRequest: async () => {
           const next = statuses[statusIndex++];
           if (next instanceof Error) throw next;
@@ -107,7 +109,7 @@ function makeManager(
     },
     onRateLimit: () => { rateLimits.push(Date.now()); }
   });
-  return { manager, created, openCalls, rateLimits, apiCalls: () => statusIndex };
+  return { manager, created, openCalls, rateLimits, lockReleases, apiCalls: () => statusIndex };
 }
 
 test('creates exactly one private context per engagement/account and exposes metadata only', async () => {
@@ -211,7 +213,7 @@ test('hands challenges to the researcher and revokes the context and capability 
   const revoked = await manager.revoke('engagement-a', 'researcher-a', true);
   assert.equal(revoked.state, 'revoked');
   assert.equal(revoked.revoked, true);
-  assert.equal(manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'revoked');
+  assert.equal(manager.getSnapshot('engagement-a', 'researcher-a'), undefined, 'a closed context is detached from the active session map');
 });
 
 test('requires a fresh attended login after the researcher closes a revoked profile', async () => {
@@ -221,7 +223,21 @@ test('requires a fresh attended login after the researcher closes a revoked prof
   await manager.openLogin('engagement-a', 'researcher-a', 'https://login.identity.example:443');
   manager.confirmAttendedLogin('engagement-a', 'researcher-a');
   await manager.revoke('engagement-a', 'researcher-a', true);
+  assert.equal(manager.getSnapshot('engagement-a', 'researcher-a'), undefined, 'closed profiles must be detached from the live session map');
   const restarted = await manager.start('engagement-a', 'researcher-a');
   assert.equal(restarted.state, 'login_required');
   assert.equal(created.length, 2);
+});
+
+test('keeps the profile lock when browser shutdown fails', async () => {
+  const { SessionManager } = await getApi();
+  const state = makeManager(SessionManager, { closeFails: true });
+  await state.manager.start('engagement-a', 'researcher-a');
+
+  await assert.rejects(state.manager.revoke('engagement-a', 'researcher-a', true), /could not be closed safely/i);
+  assert.deepEqual(state.lockReleases, [], 'a possibly live browser still owns the profile');
+  assert.equal(state.manager.getSnapshot('engagement-a', 'researcher-a')?.state, 'error');
+
+  await assert.rejects(state.manager.closeAll(), /could not be closed safely/i);
+  assert.deepEqual(state.lockReleases, [], 'shutdown retries must also retain the profile lock on failure');
 });

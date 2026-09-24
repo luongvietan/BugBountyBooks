@@ -54,19 +54,21 @@ interface StoredObservation {
 }
 
 export function createPageTools(page: PageAutomationSurface, options: PageToolsOptions): {
+  setAllowedOrigins(origins: readonly string[]): void;
   navigate(url: string): Promise<{ navigated: boolean }>;
   observe(): Promise<PageObservation>;
   clickObservedLink(id: string): Promise<{ navigated: boolean }>;
   fillResearcherControlledField(id: string, value: string): Promise<{ filled: boolean }>;
 } {
-  const allowedOrigins = new Set(options.targetOrigins.map((origin) => {
+  const policyOrigins = new Set(options.targetOrigins.map((origin) => {
     try {
       const normalized = normalizeOrigin(origin);
       if (normalized !== origin) throw new Error('non-canonical');
       return normalized;
     } catch { throw new Error('Page target-origin policy is invalid'); }
   }));
-  if (!allowedOrigins.size) throw new Error('Page target-origin policy is empty');
+  if (!policyOrigins.size) throw new Error('Page target-origin policy is empty');
+  let allowedOrigins = new Set(policyOrigins);
   const sanitize = options.sanitizeText ?? defaultSanitize;
   let observations = new Map<string, StoredObservation>();
 
@@ -74,6 +76,19 @@ export function createPageTools(page: PageAutomationSurface, options: PageToolsO
     let active = false;
     try { active = options.isTargetActive() === true; } catch { active = false; }
     if (!active) throw new Error('Target session is not active');
+  }
+
+  function setAllowedOrigins(origins: readonly string[]): void {
+    if (!Array.isArray(origins)) throw new Error('Page capability origins are invalid');
+    const next = new Set<string>();
+    for (const origin of origins) {
+      let normalized: string;
+      try { normalized = normalizeOrigin(origin); } catch { throw new Error('Page capability origin is invalid'); }
+      if (normalized !== origin || !policyOrigins.has(origin)) throw new Error('Page capability origin exceeds target policy');
+      next.add(origin);
+    }
+    if (next.size !== allowedOrigins.size || [...next].some((origin) => !allowedOrigins.has(origin))) observations = new Map();
+    allowedOrigins = next;
   }
 
   function parseAllowedTarget(value: string): URL {
@@ -158,7 +173,7 @@ export function createPageTools(page: PageAutomationSurface, options: PageToolsO
     return Object.freeze({ filled: true });
   }
 
-  return Object.freeze({ navigate, observe, clickObservedLink, fillResearcherControlledField });
+  return Object.freeze({ setAllowedOrigins, navigate, observe, clickObservedLink, fillResearcherControlledField });
 }
 
 function isFillableField(raw: RawObservedElement): boolean {

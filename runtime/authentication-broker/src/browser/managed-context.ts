@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page } from 'playwright';
 import { normalizeOrigin } from '../policy/origin.js';
 import { managedBrowserNetworkOptions } from '../network/egress-preflight.js';
+import type { AuthorizedApiScope } from './api-request.js';
 import { createPageTools, type ObservedElement, type PageAutomationSurface, type PageObservation } from './page-tools.js';
 
 const PAGE_ELEMENT_SELECTOR = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="textbox"]';
@@ -25,7 +26,7 @@ export interface ManagedContextOptions {
   readonly isEgressVerified: () => boolean;
   readonly sanitizeObservation?: (value: string) => string;
   /** Internal-only adapter. If setup fails, browser API requests remain disabled. */
-  readonly createAuthorizedRequest?: (context: BrowserContext, proxyCredentials: ManagedContextOptions['proxyCredentials']) => ((input: unknown) => Promise<{
+  readonly createAuthorizedRequest?: (context: BrowserContext, proxyCredentials: ManagedContextOptions['proxyCredentials']) => ((input: unknown, scope?: AuthorizedApiScope) => Promise<{
     status: number; body: string; headers?: Readonly<Record<string, string>>; bodySuppressed?: boolean;
   }>);
   /** Test-only browser engine seam. */
@@ -36,12 +37,13 @@ export interface ManagedContextHandle {
   openLogin(origin: string): Promise<void>;
   activateTarget(): void;
   pauseTarget(): void;
-  navigate(url: string): Promise<{ navigated: boolean }>;
-  observePage(): Promise<PageObservation>;
-  clickObservedLink(id: string): Promise<{ navigated: boolean }>;
-  fillResearcherControlledField(id: string, value: string): Promise<{ filled: boolean }>;
+  setTargetScope(origins: readonly string[]): void;
+  navigate(url: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }>;
+  observePage(allowedOrigins?: readonly string[]): Promise<PageObservation>;
+  clickObservedLink(id: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }>;
+  fillResearcherControlledField(id: string, value: string, allowedOrigins?: readonly string[]): Promise<{ filled: boolean }>;
   close(): Promise<void>;
-  authorizedRequest?: (input: unknown) => Promise<{ status: number; body: string; headers?: Readonly<Record<string, string>>; bodySuppressed?: boolean }>;
+  authorizedRequest?: (input: unknown, scope?: AuthorizedApiScope) => Promise<{ status: number; body: string; headers?: Readonly<Record<string, string>>; bodySuppressed?: boolean }>;
 }
 
 export async function createManagedContext(options: ManagedContextOptions): Promise<ManagedContextHandle> {
@@ -81,11 +83,12 @@ export async function createManagedContext(options: ManagedContextOptions): Prom
     }
 
     let phase: 'blocked' | 'bootstrap' | 'target' = 'blocked';
+    let activeTargetOrigins: readonly string[] = Object.freeze([]);
     let currentPage: Page | undefined;
     let currentTools: ReturnType<typeof createPageTools> | undefined;
 
     await context.route('**/*', async (route) => {
-      if (isPageRequestAllowed(route.request().url(), route.request().method(), phase, loginOrigins, targetOrigins)) {
+      if (isPageRequestAllowed(route.request().url(), route.request().method(), phase, loginOrigins, targetOrigins, activeTargetOrigins)) {
         try { await route.continue(); } catch { try { await route.abort('failed'); } catch { /* closed context */ } }
       } else {
         try { await route.abort('blockedbyclient'); } catch { /* closed context */ }
@@ -113,13 +116,24 @@ export async function createManagedContext(options: ManagedContextOptions): Prom
       });
     }
 
-    async function requirePageTools(): Promise<ReturnType<typeof createPageTools>> {
+    function setTargetScope(origins: readonly string[]): void {
+      const permitted = normalizeOriginSet(origins);
+      if (permitted.some((origin) => !targetOrigins.includes(origin))) throw new Error('Page capability exceeds current target policy');
+      activeTargetOrigins = Object.freeze(permitted);
+      if (currentTools) currentTools.setAllowedOrigins(permitted);
+    }
+
+    async function requirePageTools(allowedOrigins: readonly string[] = activeTargetOrigins): Promise<ReturnType<typeof createPageTools>> {
       if (phase !== 'target') throw new Error('Target session is not active');
+      const permitted = normalizeOriginSet(allowedOrigins);
+      if (!permitted.length || permitted.some((origin) => !targetOrigins.includes(origin))) throw new Error('Page capability exceeds current target policy');
+      setTargetScope(permitted);
       if (!currentPage || currentPage.isClosed()) {
         const page = await context!.newPage();
         attachPageTools(page);
       }
       if (!currentTools) throw new Error('Managed page tools are unavailable');
+      currentTools.setAllowedOrigins(permitted);
       return currentTools;
     }
 
@@ -140,24 +154,27 @@ export async function createManagedContext(options: ManagedContextOptions): Prom
       },
       activateTarget(): void {
         phase = 'target';
+        setTargetScope([]);
       },
       pauseTarget(): void {
         phase = 'blocked';
+        activeTargetOrigins = Object.freeze([]);
       },
-      async navigate(url: string): Promise<{ navigated: boolean }> {
-        const tools = await requirePageTools();
+      setTargetScope,
+      async navigate(url: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }> {
+        const tools = await requirePageTools(allowedOrigins);
         return tools.navigate(url);
       },
-      async observePage(): Promise<PageObservation> {
-        const tools = await requirePageTools();
+      async observePage(allowedOrigins?: readonly string[]): Promise<PageObservation> {
+        const tools = await requirePageTools(allowedOrigins);
         return tools.observe();
       },
-      async clickObservedLink(id: string): Promise<{ navigated: boolean }> {
-        const tools = await requirePageTools();
+      async clickObservedLink(id: string, allowedOrigins?: readonly string[]): Promise<{ navigated: boolean }> {
+        const tools = await requirePageTools(allowedOrigins);
         return tools.clickObservedLink(id);
       },
-      async fillResearcherControlledField(id: string, value: string): Promise<{ filled: boolean }> {
-        const tools = await requirePageTools();
+      async fillResearcherControlledField(id: string, value: string, allowedOrigins?: readonly string[]): Promise<{ filled: boolean }> {
+        const tools = await requirePageTools(allowedOrigins);
         return tools.fillResearcherControlledField(id, value);
       },
       async close(): Promise<void> {
@@ -221,7 +238,7 @@ function createPageSurface(page: Page): PageAutomationSurface {
   };
 }
 
-function isPageRequestAllowed(urlText: string, method: string, phase: 'blocked' | 'bootstrap' | 'target', loginOrigins: readonly string[], targetOrigins: readonly string[]): boolean {
+function isPageRequestAllowed(urlText: string, method: string, phase: 'blocked' | 'bootstrap' | 'target', loginOrigins: readonly string[], targetOrigins: readonly string[], activeTargetOrigins: readonly string[]): boolean {
   if (phase === 'blocked') return false;
   let origin: string;
   try {
@@ -229,7 +246,7 @@ function isPageRequestAllowed(urlText: string, method: string, phase: 'blocked' 
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
     origin = normalizeOrigin(url.origin);
   } catch { return false; }
-  if (phase === 'target') return targetOrigins.includes(origin) && READ_ONLY_METHODS.has(method);
+  if (phase === 'target') return activeTargetOrigins.includes(origin) && READ_ONLY_METHODS.has(method);
   if (loginOrigins.includes(origin)) return LOGIN_METHODS.has(method);
   return targetOrigins.includes(origin) && READ_ONLY_METHODS.has(method);
 }

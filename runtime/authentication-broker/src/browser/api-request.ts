@@ -27,6 +27,14 @@ export interface AuthorizedApiRequest {
   readonly body?: string | Buffer;
 }
 
+export interface AuthorizedApiScope {
+  readonly allowedOrigins: readonly string[];
+  readonly allowedMethods: readonly string[];
+  readonly technique: string;
+  readonly endpointAuthorizationId: string;
+  readonly authorizeEndpoint: (request: { origin: string; method: string; path: string; technique: string; endpointAuthorizationId: string }) => boolean;
+}
+
 export interface ApiRequestResult {
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;

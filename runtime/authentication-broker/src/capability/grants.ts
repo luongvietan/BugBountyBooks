@@ -20,8 +20,10 @@ export interface GuardedRequest {
   toolName: WorkerToolName;
   method: HttpMethod;
   origin: string;
+  path?: string;
   technique: string;
   endpointAuthorizationId: string;
+  checkEndpoint?: boolean;
   bodyBytes?: number;
   // Deliberately ignored if supplied by an untrusted caller. Identity/account
   // values come only from the server registry and researcher-issued capability.
@@ -30,9 +32,15 @@ export interface GuardedRequest {
 }
 
 export interface RequestContext {
+  connectionId: string;
   engagementId: string;
   accountAlias: string;
   policyRevision: string;
+  role: CapabilityRole;
+  technique: string;
+  policyReference: string;
+  methods: readonly HttpMethod[];
+  origins: readonly string[];
 }
 
 export interface GuardResult {
@@ -40,6 +48,15 @@ export interface GuardResult {
   reason: string;
   context?: RequestContext;
   release?: () => void;
+}
+
+export interface WorkerCapabilityView {
+  readonly context: RequestContext;
+  readonly tools: readonly WorkerToolName[];
+  readonly methods: readonly HttpMethod[];
+  readonly origins: readonly string[];
+  readonly maxRequestBodyBytes: number;
+  readonly authorizeEndpoint: (input: { origin: string; method: HttpMethod; path: string; endpointAuthorizationId: string }) => boolean;
 }
 
 interface Capability {
@@ -74,15 +91,15 @@ interface CapabilityManagerOptions {
   /** Missing or uncertain verification is equivalent to unverified. */
   egressIsVerified?: () => boolean;
   /** Required endpoint-level authorization lookup; no default allow exists. */
-  authorizeEndpoint: (context: RequestContext & { policyReference: string; origin: string; method: HttpMethod; endpointAuthorizationId: string }) => boolean;
+  authorizeEndpoint: (context: RequestContext & { policyReference: string; origin: string; method: HttpMethod; path: string; endpointAuthorizationId: string }) => boolean;
 }
 
 type RegistryAccess = ConnectionIdResolver & Partial<Pick<ConnectionRegistry, 'list' | 'onClosed'>>;
 
 const roleTools: Record<CapabilityRole, ReadonlySet<WorkerToolName>> = {
-  mapper: new Set(['session_status', 'observe_page', 'navigate']),
-  tester: new Set(['session_status', 'open_login', 'observe_page', 'navigate', 'act_on_observed_element', 'authorized_request']),
-  validator: new Set(['session_status', 'observe_page', 'navigate', 'authorized_request'])
+  mapper: new Set(['session_status', 'observe_page', 'navigate', 'revoke_capability']),
+  tester: new Set(['session_status', 'open_login', 'observe_page', 'navigate', 'act_on_observed_element', 'authorized_request', 'revoke_capability']),
+  validator: new Set(['session_status', 'observe_page', 'navigate', 'authorized_request', 'revoke_capability'])
 };
 
 export class CapabilityManager {
@@ -143,24 +160,9 @@ export class CapabilityManager {
   }
 
   acquire(sessionId: string | undefined, request: GuardedRequest): GuardResult {
-    const connectionId = this.registry.resolve(sessionId);
-    if (!connectionId) return denied('worker identity is unavailable');
-    const capability = this.capabilities.get(connectionId);
-    if (!capability) return denied('no active capability');
-    const nowMs = this.now().getTime();
-    const policy = this.currentPolicy();
-    if (!policy || policy.policySnapshot.revision !== capability.policyRevision || policy.engagementId !== capability.engagementId) {
-      this.capabilities.delete(connectionId);
-      return denied('policy changed or is unavailable');
-    }
-    if (!this.isEgressVerified()) {
-      this.capabilities.delete(connectionId);
-      return denied('egress protection is unverified');
-    }
-    if (nowMs >= capability.expiresAtMs) {
-      this.capabilities.delete(connectionId);
-      return denied('capability expired');
-    }
+    const active = this.resolveActiveCapability(sessionId);
+    if (!active.capability) return denied(active.reason);
+    const { capability, policy, connectionId, nowMs } = active;
     if (!capability.tools.has(request.toolName)) return denied('tool is outside capability');
     if (request.technique !== capability.technique) return denied('technique is outside capability');
     if (!capability.methods.has(request.method) || !policy.targetOrigins.includes(request.origin) || !capability.origins.has(request.origin)) return denied('method or origin is outside capability');
@@ -172,37 +174,61 @@ export class CapabilityManager {
       this.capabilities.delete(connectionId);
       return denied('policy grant is no longer current');
     }
-    const context: RequestContext = {
-      engagementId: capability.engagementId,
-      accountAlias: capability.accountAlias,
-      policyRevision: capability.policyRevision
-    };
-    let endpointAllowed = false;
-    try {
-      endpointAllowed = this.authorizeEndpoint({ ...context, policyReference: capability.policyReference, origin: request.origin, method: request.method, endpointAuthorizationId: request.endpointAuthorizationId });
-    } catch {
-      endpointAllowed = false;
+    if (request.checkEndpoint !== false) {
+      let endpointAllowed = false;
+      try {
+        endpointAllowed = this.authorizeEndpoint({
+          ...this.contextFor(capability),
+          origin: request.origin,
+          method: request.method,
+          path: request.path ?? '/',
+          endpointAuthorizationId: request.endpointAuthorizationId
+        });
+      } catch { endpointAllowed = false; }
+      if (!endpointAllowed) return denied('endpoint authorization is unavailable');
     }
-    if (!endpointAllowed) return denied('endpoint authorization is unavailable');
-    if (capability.activeRequests >= policy.limits.maxConcurrentRequests) return denied('concurrency ceiling reached');
-    refill(capability, nowMs, policy.limits.requestsPerSecond);
-    if (capability.rateTokens < 1) return denied('request rate ceiling reached');
-    if (capability.remainingRequests < 1) return denied('request budget exhausted');
+    return this.reserve(capability, policy, nowMs);
+  }
 
-    capability.rateTokens -= 1;
-    capability.remainingRequests -= 1;
-    capability.activeRequests += 1;
-    let released = false;
-    return {
-      allowed: true,
-      reason: 'authorized',
+  /** Worker entry point: technique and account come only from the active grant. */
+  acquireWorkerRequest(sessionId: string | undefined, request: Omit<GuardedRequest, 'technique' | 'accountAlias' | 'connectionId'>): GuardResult {
+    const connectionId = this.registry.resolve(sessionId);
+    const capability = connectionId ? this.capabilities.get(connectionId) : undefined;
+    if (!capability) return denied(connectionId ? 'no active capability' : 'worker identity is unavailable');
+    return this.acquire(sessionId, { ...request, technique: capability.technique });
+  }
+
+  /** Non-network worker actions still consume a bounded capability request slot. */
+  acquireTool(sessionId: string | undefined, toolName: WorkerToolName): GuardResult {
+    const active = this.resolveActiveCapability(sessionId);
+    if (!active.capability) return denied(active.reason);
+    if (!active.capability.tools.has(toolName)) return denied('tool is outside capability');
+    return this.reserve(active.capability, active.policy, active.nowMs);
+  }
+
+  workerCapabilityFor(sessionId: string | undefined): WorkerCapabilityView | undefined {
+    const active = this.resolveActiveCapability(sessionId);
+    if (!active.capability) return undefined;
+    const { capability, policy } = active;
+    const context = this.contextFor(capability);
+    return Object.freeze({
       context,
-      release: () => {
-        if (released) return;
-        released = true;
-        capability.activeRequests = Math.max(0, capability.activeRequests - 1);
+      tools: Object.freeze([...capability.tools]),
+      methods: Object.freeze([...capability.methods]),
+      origins: Object.freeze([...capability.origins]),
+      maxRequestBodyBytes: policy.limits.maxRequestBodyBytes,
+      authorizeEndpoint: (request: { origin: string; method: HttpMethod; path: string; endpointAuthorizationId: string }) => {
+        let allowed = false;
+        try {
+          allowed = this.authorizeEndpoint({
+            ...context,
+            policyReference: capability.policyReference,
+            ...request
+          }) === true;
+        } catch { allowed = false; }
+        return allowed;
       }
-    };
+    });
   }
 
   revoke(connectionId: string): boolean {
@@ -220,6 +246,77 @@ export class CapabilityManager {
 
   accountAliasFor(connectionId: string): string | undefined {
     return this.capabilities.get(connectionId as ConnectionId)?.accountAlias;
+  }
+
+  hasOpenWorkerIdentity(sessionId: string | undefined): boolean {
+    if (typeof sessionId !== 'string' || !sessionId) return false;
+    const connectionId = this.registry.resolve(sessionId);
+    return Boolean(connectionId && this.registry.list?.().some((record) => record.connectionId === connectionId));
+  }
+
+  connectionIdForWorker(sessionId: string | undefined): string | undefined {
+    if (typeof sessionId !== 'string' || !sessionId) return undefined;
+    return this.registry.resolve(sessionId);
+  }
+
+  private resolveActiveCapability(sessionId: string | undefined):
+    | { capability: Capability; policy: BrokerPolicy; connectionId: ConnectionId; nowMs: number }
+    | { capability?: undefined; reason: string } {
+    if (typeof sessionId !== 'string' || !sessionId) return { reason: 'worker identity is unavailable' };
+    const connectionId = this.registry.resolve(sessionId);
+    if (!connectionId) return { reason: 'worker identity is unavailable' };
+    const capability = this.capabilities.get(connectionId);
+    if (!capability) return { reason: 'no active capability' };
+    const nowMs = this.now().getTime();
+    const policy = this.currentPolicy();
+    if (!policy || policy.policySnapshot.revision !== capability.policyRevision || policy.engagementId !== capability.engagementId) {
+      this.capabilities.delete(connectionId);
+      return { reason: 'policy changed or is unavailable' };
+    }
+    if (!this.isEgressVerified()) {
+      this.capabilities.delete(connectionId);
+      return { reason: 'egress protection is unverified' };
+    }
+    if (nowMs >= capability.expiresAtMs) {
+      this.capabilities.delete(connectionId);
+      return { reason: 'capability expired' };
+    }
+    return { capability, policy, connectionId, nowMs };
+  }
+
+  private reserve(capability: Capability, policy: BrokerPolicy, nowMs: number): GuardResult {
+    if (capability.activeRequests >= policy.limits.maxConcurrentRequests) return denied('concurrency ceiling reached');
+    refill(capability, nowMs, policy.limits.requestsPerSecond);
+    if (capability.rateTokens < 1) return denied('request rate ceiling reached');
+    if (capability.remainingRequests < 1) return denied('request budget exhausted');
+    capability.rateTokens -= 1;
+    capability.remainingRequests -= 1;
+    capability.activeRequests += 1;
+    let released = false;
+    return {
+      allowed: true,
+      reason: 'authorized',
+      context: this.contextFor(capability),
+      release: () => {
+        if (released) return;
+        released = true;
+        capability.activeRequests = Math.max(0, capability.activeRequests - 1);
+      }
+    };
+  }
+
+  private contextFor(capability: Capability): RequestContext {
+    return Object.freeze({
+      connectionId: capability.connectionId,
+      engagementId: capability.engagementId,
+      accountAlias: capability.accountAlias,
+      policyRevision: capability.policyRevision,
+      role: capability.role,
+      technique: capability.technique,
+      policyReference: capability.policyReference,
+      methods: Object.freeze([...capability.methods]),
+      origins: Object.freeze([...capability.origins])
+    });
   }
 
   private currentPolicy(): BrokerPolicy | undefined {
