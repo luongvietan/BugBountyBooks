@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "engagementId": "synthetic-demo-2026-09-24",
+  "policySnapshot": {
+    "url": "https://program.example/rules",
+    "revision": "synthetic revision",
+    "capturedAtUtc": "2026-09-24T00:00:00Z",
+    "freshUntilUtc": "2026-10-01T00:00:00Z"
+  },
+  "accountAliases": ["researcher-a"],
+  "loginOrigins": [],
+  "refreshOrigins": [],
+  "targetOrigins": ["https://app.example:443"],
+  "grants": [
+    {
+      "accountAlias": "researcher-a",
+      "technique": "read-only application mapping",
+      "methods": ["GET", "HEAD"],
+      "policyReference": "Synthetic rules > authorized read-only test"
+    }
+  ],
+  "limits": {
+    "requestsPerSecond": 1,
+    "maxConcurrentRequests": 1,
+    "maxRequestsPerCapability": 100,
+    "maxRequestBodyBytes": 65536,
+    "expiresAtUtc": "2026-09-24T08:00:00Z"
+  },
+  "stopConditions": ["scope or method ambiguity", "service degradation"]
+}
