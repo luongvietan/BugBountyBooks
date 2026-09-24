@@ -50,7 +50,9 @@ interface ParsedHttpRequest extends ParsedHeader {
 
 interface ParsedConnectRequest extends ParsedHeader {
   readonly kind: 'connect';
-  readonly origin: string;
+  readonly originCandidates: readonly string[];
+  readonly hostname: string;
+  readonly port: number;
   readonly contentLength: 0;
 }
 
@@ -204,9 +206,10 @@ export function createOriginProxy(options: OriginProxyOptions): {
         return;
       }
       const method = parsed.kind === 'connect' ? 'CONNECT' : parsed.method;
-      const targetOriginAllowed = capability.allowedOrigins.includes(parsed.origin);
+      const requestOrigin = parsed.kind === 'connect' ? matchConnectOrigin(parsed, capability.allowedOrigins) : parsed.origin;
+      const targetOriginAllowed = requestOrigin !== undefined && capability.allowedOrigins.includes(requestOrigin);
       const methodAllowed = parsed.kind === 'connect'
-        ? capability.allowedMethods.some((item) => item === 'GET' || item === 'HEAD')
+        ? capability.allowedMethods.some((item) => ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(item))
         : capability.allowedMethods.includes(parsed.method);
       if (!targetOriginAllowed || !methodAllowed || Date.parse(capability.expiresAtUtc) <= Date.now()) {
         writeAndClose(clientSocket, 403, 'Forbidden');
@@ -219,7 +222,7 @@ export function createOriginProxy(options: OriginProxyOptions): {
       let lease: ProxyAuthorizationLease;
       try {
         const authorization = options.authorize(capability, {
-          origin: parsed.origin,
+          origin: requestOrigin!,
           method,
           targetPath: parsed.kind === 'http' ? parsed.requestTarget : '/',
           technique: capability.technique
@@ -236,7 +239,7 @@ export function createOriginProxy(options: OriginProxyOptions): {
       active.lease = lease;
 
       let destination: PinnedDestination;
-      try { destination = await resolveAndPinDestination(parsed.origin, options.resolver); } catch {
+      try { destination = await resolveAndPinDestination(requestOrigin!, options.resolver); } catch {
         writeAndClose(clientSocket, 403, 'Forbidden');
         return;
       }
@@ -326,14 +329,18 @@ function parseRequestHeader(headerBytes: Buffer, initialBytes: Buffer): ParsedPr
     const explicitPort = Number(authority[2]);
     if (!Number.isInteger(explicitPort) || explicitPort < 1 || explicitPort > 65535) return undefined;
     let url: URL;
-    let origin: string;
+    let httpOrigin: string;
+    let httpsOrigin: string;
     try {
       url = new URL(`https://${target}`);
       if (url.username || url.password || url.pathname !== '/' || url.hostname.toLowerCase() !== authority[1]!.toLowerCase()) return undefined;
-      origin = normalizeOrigin(url.origin);
-      if (normalizeOrigin(`https://${host}`) !== origin) return undefined;
+      const hostname = url.hostname.toLowerCase();
+      const port = explicitPort;
+      httpOrigin = normalizeOrigin(`http://${hostname}:${port}`);
+      httpsOrigin = normalizeOrigin(`https://${hostname}:${port}`);
+      if (normalizeOrigin(`https://${host}`) !== httpsOrigin) return undefined;
     } catch { return undefined; }
-    return { kind: 'connect', method, target, version, headers, initialBytes, origin, contentLength: 0 };
+    return { kind: 'connect', method, target, version, headers, initialBytes, originCandidates: Object.freeze([httpOrigin, httpsOrigin]), hostname: url.hostname.toLowerCase(), port: explicitPort, contentLength: 0 };
   }
 
   let url: URL;
@@ -351,6 +358,11 @@ function parseRequestHeader(headerBytes: Buffer, initialBytes: Buffer): ParsedPr
   if (initialBytes.length > contentLength) return undefined;
   const requestTarget = `${url.pathname || '/'}${url.search}`;
   return { kind: 'http', method, target, version, headers, initialBytes, origin, host: url.host, requestTarget, contentLength };
+}
+
+function matchConnectOrigin(request: ParsedConnectRequest, allowedOrigins: readonly string[]): string | undefined {
+  const matches = request.originCandidates.filter((origin) => allowedOrigins.includes(origin));
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function serializeUpstreamRequest(request: ParsedHttpRequest): string {
