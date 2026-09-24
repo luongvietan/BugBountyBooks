@@ -58,7 +58,7 @@ for the authoritative list of files changed by each task/commit.
 | `payloads-all-the-things` | swisskyrepo rolling master | Same rolling source | SKILL.md + ch01,04,05,06,08,11,14,15 | UPDATE: context-first selection framing, lab-vs-live distinction (T8) |
 | `tbhm-methodology` | jhaddix/tbhm + Haddix talks | Recon-stack drift (amass v5 etc.) | SKILL.md + ch02,03,08 mainly | UPDATE: era-mark tool examples, route to recon-pipeline for executable state (T8) |
 | `hacking-apis` | Corey Ball book (Early Access) | API Top 10 2023 + vendor docs | SKILL.md + ch00,01,03,04,05,06,07,08,10,11 | UPDATE: 2023 crosswalk, BOPLA rename, low-volume auth checks (T4) |
-| `owasp-api-security-top-10` | API Top 10 **2019** | API Top 10 **2023** | all 10 chapters + SKILL.md + cheatsheet/patterns | UPDATE: full 2019→2023 crosswalk; keep 2019 labeled historical (T4) |
+| `owasp-api-security-top-10` | 2019 source book; **2023 current model in Core Testing Model** | API Top 10 **2023** | all 10 chapters + SKILL.md + cheatsheet/patterns | UPDATE: full 2019→2023 crosswalk; 2023 is the default taxonomy and 2019 chapter paths are explicitly historical (T4 + delta 2026-09-24) |
 | `bug-bounty-bootcamp` | Vickie Li book (2021), 22 chapters | Academy/WSTG modern equivalents | SKILL.md + ch01,03,07,09,10,20,21,22 | UPDATE: annotate dated tools, route modern classes, keep durable loop (T8) |
 | `bug-bounty-playbook` | ghostlulz playbook V2 | Safe-validation gates; current technique refs | SKILL.md + ch01,03,04,05,09,10,11,13,14 | UPDATE: brute-force/exploitation examples → theory or permission-gated (T8) |
 | `web-hacking-101` | Yaworski (2017) case studies | Historical value only | SKILL.md + ch01,04,10 | UPDATE: explicit historical framing, no payout/severity promises (T8) |
@@ -154,17 +154,29 @@ Delta files changed in the skills repository:
 - `bug-bounty-hunter/chapters/02-session-checklist.md`
 - `bug-bounty-hunter/chapters/03-vuln-class-index.md`
 - `bug-bounty-hunter/sources.md`
+- `owasp-api-security-top-10/SKILL.md`
+- `owasp-api-security-top-10/sources.md`
 - `web-security-academy/SKILL.md`
 - `web-security-academy/chapters/ch15-logic-race-api-llm.md`
 - `web-security-academy/sources.md`
 
 This register and the historical full-refresh plan were updated in this
-workspace; the dated delta plan records the execution steps. Final static
-review found all 12 crosswalk activities mapped, the Phase 2/3 session gate
-consistent with functional-first ordering, 231 changed-chapter references
-resolving, no remaining current-2025 LLM route, and no whitespace errors.
+workspace; the dated delta plan records the execution steps. A follow-up
+consistency review also corrected `owasp-api-security-top-10/SKILL.md` so its
+Core Testing Model uses the 2023 taxonomy; 2019 source-book chapters remain
+historically labeled and mapped by the crosswalk. Final static review found
+all 12 methodology activities mapped, the Phase 2/3 session gate consistent
+with functional-first ordering, 231 changed-chapter references resolving, no
+remaining current-2025 LLM route, and no whitespace errors.
 No live-target requests, scans, exploit attempts, or credential checks were
 performed. The original plan's generated-skill scanner and pressure-scenario
 steps remain open because their run output was not retained; this delta does
 not claim those checks passed. Other rolling authorities and tool versions
-not named above retain their 2026-09-23 baseline snapshot.
+not named above retain their 2026-09-23 baseline snapshot. A full runtime walk
+from authenticated program URL through validation/report remains unverified
+until an explicitly authorized program, its URL, and its testing limits are
+provided; existing design and pressure scenarios alone are not runtime
+evidence. This focused delta is not an exhaustive chapter-by-chapter audit of
+all 17 skills. Reassess whether AI agent/MCP authorization warrants a
+standalone skill after the workflow evidence is collected; no such skill was
+created in this delta.

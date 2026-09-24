@@ -148,3 +148,20 @@ These are crosswalk labels from the user-provided **BUG BOUNTY METHODOLOGY 2026 
 - WSTG, API Top 10, and ASVS version statements match the official sources checked on the review date.
 - No live-target actions are performed; no engagement evidence or unrelated user changes are modified.
 - The final update names the files changed and the remaining source-watch items.
+
+## Follow-up review (2026-09-24, after delta closeout)
+
+- The user's consistency review found that `owasp-api-security-top-10/SKILL.md`
+  still presented 2019 labels in its Core Testing Model. This was corrected:
+  the quick model now uses API1:2023–API10:2023 names, while 2019 chapter IDs
+  remain explicitly historical.
+- Runtime validation of `Program URL → Scope Contract → Feature Card →
+  Hypothesis → Validation → Report` remains open. The design and existing
+  pressure scenarios do not prove an end-to-end runtime pass; none was run in
+  this delta. A named authorized program, URL, and exact testing limits are
+  required before any target-facing step.
+- Do not create a separate AI agent/MCP skill before collecting that workflow
+  evidence. Reassess the need from observed gaps in tool authorization,
+  identity, memory, and retrieved-data boundaries afterward.
+- This is a focused currency and consistency delta, not an exhaustive
+  chapter-by-chapter audit of all 17 skills.
